@@ -4,8 +4,9 @@ Minimal offline Tetris for Mac, built with C and [raylib](https://www.raylib.com
 
 ## Requirements
 
-- macOS 13+
-- Homebrew packages: `raylib`, `cmake`, `pkg-config`
+To play a packaged build: macOS 11+, Intel or Apple Silicon. Nothing to install.
+
+To develop: Xcode command line tools and a few Homebrew packages.
 
 ```bash
 brew install raylib cmake pkg-config
@@ -14,10 +15,49 @@ brew install raylib cmake pkg-config
 ## Build and run
 
 ```bash
-chmod +x build.sh
 ./build.sh
 ./build/puzzie
 ```
+
+This links Homebrew's raylib and builds for your own Mac only, which keeps
+rebuilds to about a second. It is not something you can hand to anyone else —
+see [Shipping it to someone else](#shipping-it-to-someone-else).
+
+## Shipping it to someone else
+
+```sh
+./package.sh
+```
+
+Produces `dist/Puzzie.zip` containing `Puzzie.app`, around 1 MB. It runs on
+Intel and Apple Silicon Macs from macOS 11 onward with nothing installed.
+
+Do not hand over `build/puzzie` from a normal build. That binary is built for
+the host architecture only and links Homebrew's raylib from
+`/opt/homebrew`, so on another Mac it either cannot execute at all or dies
+looking for a library that is not there. A bare Unix executable also opens a
+Terminal window when double-clicked in Finder rather than launching as an app.
+
+`package.sh` avoids all three:
+
+- Builds for `x86_64` and `arm64`, and fails the build if either slice is
+  missing.
+- Compiles raylib from source and links it statically, then checks that the
+  binary references nothing outside `/System` and `/usr/lib`.
+- Produces a real `.app` with the assets inside `Contents/Resources`, so it
+  launches from Finder and is a single thing to copy.
+
+The app is signed ad-hoc rather than notarised, which is enough to launch but
+not enough to satisfy Gatekeeper automatically. After transfer, the recipient
+opens it once with right-click → **Open** → **Open**, or clears the quarantine
+flag:
+
+```sh
+xattr -dr com.apple.quarantine /path/to/Puzzie.app
+```
+
+Getting rid of that step needs a paid Apple Developer ID signature plus
+notarisation.
 
 ## Modes
 

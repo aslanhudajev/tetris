@@ -1,2 +1,4 @@
 build/
+build-bundle/
+dist/
 .DS_Store
