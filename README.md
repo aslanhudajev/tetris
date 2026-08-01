@@ -43,18 +43,58 @@ The core follows the Tetris Guideline:
 
 ## Themes
 
-Block art is data driven. A theme is one grayscale image plus a block of
-metadata in `assets/themes/themes.cfg`; the game tints that single image with
-each piece's colour, so one file covers all seven pieces.
+Block art is data driven, declared in `assets/themes/themes.cfg`. A theme is a
+**sheet**: one image holding an authored, fully coloured block per piece, laid
+out on a grid.
 
-The tile is always drawn axis aligned, never rotated with the piece, so baked-in
-directional lighting stays consistent across the board.
+```ini
+[theme]
+id = bevel
+name = Beveled
+sheet = bevel/blocks.png
+```
+
+The default grid is seven cells across in the order `I O T S Z J L`, so a
+896 x 128 image needs no further configuration. Sheets in another layout
+describe themselves with `columns`, `rows` and `order` rather than being
+re-cut.
+
+Nothing is recoloured at runtime, so what you draw is what appears on the
+board, and the whole playfield batches into one draw call because every block
+samples the same texture. A grayscale `tile` multiplied by the piece colour is
+still supported as a fallback, and a theme with no art at all draws flat
+rounded blocks in a palette you choose.
+
+Themes also control the backdrop — a colour, a gradient, an image, or a
+fragment shader — plus the fill, border, thickness, corner radius and optional
+texture of the board well and the side panels.
+
+Every key is optional and costs nothing when unused. Activating a theme folds
+the whole manifest into plain values, so the draw path never checks whether a
+feature is enabled; it draws what was already resolved. Only the active theme
+holds textures or shaders.
+
+Block art is always drawn axis aligned, never rotated with the piece, so
+baked-in directional lighting stays consistent across the board.
 
 `No Theme` is built into the binary and renders the plain colored squares. It is
 always available even if the assets folder is missing.
 
 Full specification and instructions for adding a theme:
 [`assets/themes/README.md`](assets/themes/README.md).
+
+## Fonts
+
+The interface uses **SF Pro Rounded** for labels and **SF Mono** for numbers,
+both loaded at runtime from `/System/Library/Fonts/`. Nothing is bundled, so no
+Apple typeface is redistributed, and there is nothing to download.
+
+If a face is missing the game walks a fallback list (SF Compact Rounded, SF Pro,
+Arial Rounded Bold, then raylib's built-in font) and logs which one it picked.
+Note that raylib's TTF parser cannot read `.ttc` collections, which rules out
+most of the older macOS families such as Avenir Next and Helvetica Neue. To use
+your own font, drop a `.ttf` in and add it to the candidate list at the top of
+`src/ui.c`.
 
 ## Controls
 
@@ -88,12 +128,15 @@ Everything lives in `~/Library/Application Support/Puzzie/`:
 
 ```text
 assets/
-  themes/       Theme manifest and per-theme art
+  themes/       Theme manifest, per-theme art and backdrop shaders
+tools/
+  gen_block_sheet.c  Generates the default block sheet, not part of the build
 src/
   main.c        Entry point, scenes, input handling
   game.c        Board, pieces, modes, guideline rules
   render.c      Board, HUD and overlay drawing
   menu.c        Mouse-driven menu screens
+  ui.c          Font loading, text and panel drawing helpers
   theme.c       Theme manifest parsing and texture management
   scores.c      High score persistence
   platform.c    Asset and app data path resolution

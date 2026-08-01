@@ -4,6 +4,7 @@
 #include "render.h"
 #include "scores.h"
 #include "theme.h"
+#include "ui.h"
 
 #include <raylib.h>
 #include <stdlib.h>
@@ -168,6 +169,7 @@ int main(void) {
     memset(&input, 0, sizeof(input));
     scores_load(&scores);
     themes_load(&themes);
+    ui_fonts_load();
 
     while (!WindowShouldClose() && scene != APP_SCENE_QUIT) {
         float dt = GetFrameTime();
@@ -249,6 +251,7 @@ int main(void) {
         EndDrawing();
     }
 
+    ui_fonts_unload();
     themes_unload(&themes);
     CloseWindow();
     return 0;

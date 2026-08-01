@@ -15,6 +15,7 @@ add_executable(puzzie
     src/scores.c
     src/theme.c
     src/platform.c
+    src/ui.c
 )
 
 target_include_directories(puzzie PRIVATE src ${RAYLIB_INCLUDE_DIRS})
