@@ -1,4 +1,4 @@
-# Puzzie
+# Metris
 
 Minimal offline Tetris for Mac, built with C and [raylib](https://www.raylib.com/).
 
@@ -16,7 +16,7 @@ brew install raylib cmake pkg-config
 
 ```bash
 ./build.sh
-./build/puzzie
+./build/metris
 ```
 
 This links Homebrew's raylib and builds for your own Mac only, which keeps
@@ -29,10 +29,10 @@ see [Shipping it to someone else](#shipping-it-to-someone-else).
 ./package.sh
 ```
 
-Produces `dist/Puzzie.zip` containing `Puzzie.app`, around 1 MB. It runs on
+Produces `dist/Metris.zip` containing `Metris.app`, around 1 MB. It runs on
 Intel and Apple Silicon Macs from macOS 11 onward with nothing installed.
 
-Do not hand over `build/puzzie` from a normal build. That binary is built for
+Do not hand over `build/metris` from a normal build. That binary is built for
 the host architecture only and links Homebrew's raylib from
 `/opt/homebrew`, so on another Mac it either cannot execute at all or dies
 looking for a library that is not there. A bare Unix executable also opens a
@@ -53,7 +53,7 @@ opens it once with right-click → **Open** → **Open**, or clears the quaranti
 flag:
 
 ```sh
-xattr -dr com.apple.quarantine /path/to/Puzzie.app
+xattr -dr com.apple.quarantine /path/to/Metris.app
 ```
 
 Getting rid of that step needs a paid Apple Developer ID signature plus
@@ -157,7 +157,7 @@ rate, and the lock delay a grounded piece gets before it commits.
 
 ## Saved data
 
-Everything lives in `~/Library/Application Support/Puzzie/`:
+Everything lives in `~/Library/Application Support/Metris/`:
 
 | File | Contents |
 |------|----------|
@@ -176,7 +176,7 @@ src/
   game.c        Board, pieces, modes, guideline rules
   render.c      Board, HUD and overlay drawing
   menu.c        Mouse-driven menu screens
-  ui.c          Font loading, text and panel drawing helpers
+  ui.c          Font loading, text and shared drawing helpers
   theme.c       Theme manifest parsing and texture management
   scores.c      High score persistence
   platform.c    Asset and app data path resolution

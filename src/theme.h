@@ -78,10 +78,6 @@ typedef struct {
     ThemeFit fit;
     Texture2D texture;
     bool texture_loaded;
-
-    /* The board well tints its edge with the mode colour unless a theme says
-       otherwise. */
-    bool border_is_override;
 } ThemeSurface;
 
 typedef struct {

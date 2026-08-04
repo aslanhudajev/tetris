@@ -189,7 +189,7 @@ background = 14141C            ; solid, plus a derived gradient by default
 background_bottom = 000000     ; explicit gradient stop
 background_flat                ; solid, no gradient
 background_image = art/bg.png  ; with background_fit
-background_shader = shaders/aurora.fs
+background_shader = shaders/starfield.fs
 ```
 
 `background_fit` accepts `stretch`, `cover` (preserve aspect, crop the
@@ -204,15 +204,39 @@ receives two uniforms beyond the raylib built-ins:
 | Uniform | Type | Value |
 |---------|------|-------|
 | `time` | `float` | Seconds since launch |
-| `resolution` | `vec2` | Window size in pixels |
+| `resolution` | `vec2` | Framebuffer size in pixels |
 
-`fragTexCoord` runs 0 to 1 across the window.
-[`shaders/aurora.fs`](shaders/aurora.fs) is a working example. If a shader
-fails to compile the game logs the error and falls back to the gradient, so a
-broken shader never leaves you with a blank window.
+**Do not use `fragTexCoord`.** raylib batches shapes through the default font
+atlas, so the backdrop quad carries the texture coordinates of the single white
+pixel it borrows from there — they span roughly `1/128`, not 0 to 1. A shader
+that reads them gets a near-constant value across the whole window, which looks
+plausible for a soft colour field and falls apart the moment the effect has any
+structure to it. Derive the coordinate instead:
 
-This is the one place a shader is genuinely free: it is a single full-screen
-quad, so it costs one draw call no matter how elaborate the effect. Panels are
+```glsl
+vec2 uv = gl_FragCoord.xy / resolution;
+uv.y = 1.0 - uv.y;  // gl_FragCoord counts up from the bottom
+```
+
+`resolution` is the framebuffer, not the window, so this stays correct on a
+Retina display where the two differ by a factor of two.
+
+Two working examples ship with the game:
+[`shaders/starfield.fs`](shaders/starfield.fs) and
+[`shaders/outrun.fs`](shaders/outrun.fs). If a shader fails to compile the game
+logs the error and falls back to the gradient, so a broken shader never leaves
+you with a blank window — which is why it is worth setting `background` and
+`background_bottom` even on a theme that expects to use a shader.
+
+One draw call is not the same as free. The effect runs once per pixel per frame
+on whatever hardware the player has, and the target here includes nine year old
+integrated graphics. `starfield.fs` keeps to about a dozen `sin()` calls a pixel
+and places its stars by hashing a grid rather than sampling noise; `outrun.fs`
+is cheaper still, being one reciprocal and a handful of gradients with no noise
+in it at all.
+
+This is still the cheapest place to put an effect: it is a single full-screen
+quad, so it costs one draw call no matter how elaborate it gets. Panels are
 deliberately not shader-capable — they are many small rectangles, each of which
 would force its own batch flush, and rounded rectangles do not carry usable
 local UVs for a shader to work with.
@@ -223,20 +247,25 @@ Two surfaces, same six keys each, prefixed `panel_` or `well_`. Panels are the
 hold and next boxes; the well is the frame around the board.
 
 ```ini
-panel = 22222C               ; fill, accepts RGBA for translucency
-panel_border = 3C3C4A
-panel_border_width = 1.5     ; 0 removes the border and its draw call
-panel_radius = 8             ; corner radius in pixels
+panel = 090909EB             ; fill, accepts RGBA for translucency
+panel_border = FFFFFF3A      ; needs a width below to be drawn
+panel_border_width = 1       ; 0 removes the edge
+panel_radius = 0             ; corner radius in pixels, 0 is square
 panel_image = art/panel.png  ; replaces the fill
 panel_fit = stretch
 ```
 
-Leave `well_border` out and the frame is tinted with the current mode's accent
-colour — cyan for 40 Lines, violet for Zen, amber for Marathon. Setting it
-takes that over.
+Both surfaces default to square corners, a near-black fill and a hairline white
+edge, so the only colour in the playfield comes from the blocks themselves. The
+hold and next labels are drawn inverted on a bar across the top of each panel
+and are not themeable — they have to stay legible whatever a theme does with
+the fill underneath.
 
-Fills accept eight-digit RGBA, which is how the `aurora` theme lets its
-backdrop show through the panels.
+Clear `panel` and `panel_border_width` both and the box behind them goes away,
+leaving just the label bar and the piece.
+
+Fills accept eight-digit RGBA, which is how the `Starfield` theme lets its
+backdrop show through the well and the panels.
 
 ## Landing preview
 
@@ -298,10 +327,10 @@ color_o = FCD840
 | `background_image` | — | With `background_fit` |
 | `background_shader` | — | Fragment shader |
 | `background_fit` | `cover` | `stretch` `cover` `tile` |
-| `panel` `well` | dark greys | Fill, RGB or RGBA |
-| `panel_border` `well_border` | grey / mode accent | Edge colour |
-| `panel_border_width` `well_border_width` | `1.5` `2` | 0 removes the edge |
-| `panel_radius` `well_radius` | `8` `10` | Pixels |
+| `panel` `well` | near black | Fill, RGB or RGBA |
+| `panel_border` `well_border` | `FFFFFF3A` | Edge colour |
+| `panel_border_width` `well_border_width` | `1` | 0 removes the edge |
+| `panel_radius` `well_radius` | `0` | Pixels, 0 is square |
 | `panel_image` `well_image` | — | With `panel_fit` / `well_fit` |
 | `ghost` | `tile` | `tile` or `outline` |
 | `ghost_opacity` | `0.13` / `0.5` | 0 to 1 |
@@ -316,5 +345,5 @@ shows up the first time you run the game.
 3. Restart the game and pick it from Themes in the main menu.
 
 The selection is written to
-`~/Library/Application Support/Puzzie/settings.txt` and restored on launch.
+`~/Library/Application Support/Metris/settings.txt` and restored on launch.
 Only the active theme's texture is kept in memory.

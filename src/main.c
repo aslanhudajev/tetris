@@ -147,8 +147,13 @@ static void handle_play_input(GameState *game, InputState *input, float dt) {
 
 int main(void) {
     /* VSync alone paces the loop; adding SetTargetFPS on top makes raylib wait
-       twice per frame, which shows up as periodic stutter. */
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
+       twice per frame, which shows up as periodic stutter.
+
+       HIGHDPI keeps drawing coordinates in logical points and renders through
+       the Retina framebuffer. Without it raylib reports the window in physical
+       pixels, so on a Retina Mac every size in the interface lands at half the
+       intended scale and small text turns to mush. */
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
     InitWindow(WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, GAME_TITLE);
     SetWindowMinSize(460, 620);
     SetExitKey(KEY_NULL);

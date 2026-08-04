@@ -7,15 +7,39 @@
 #include <math.h>
 #include <raylib.h>
 #include <stddef.h>
+#include <stdio.h>
 
-#define SIDE_PANEL_WIDTH 172
-#define PREVIEW_CELL 16
-#define PREVIEW_BOX_WIDTH 108
-#define PREVIEW_BOX_HEIGHT 64
-#define WELL_PADDING 10
+/* Everything that is not the board lives in one column down the right: hold,
+   the queue, then the run's numbers anchored to the bottom of the well. The
+   window is tall and narrow by design, so a second column would cost the board
+   width it cannot spare, and splitting the chrome across both sides would leave
+   the eye travelling further than the board is wide. */
+#define EDGE_MARGIN 18
+#define SIDE_COLUMN 100
+#define COLUMN_GUTTER 14
+#define TOP_MARGIN 26
+#define BOTTOM_MARGIN 18
 
-static const Color COLOR_MUTED = {132, 132, 152, 255};
-static const Color COLOR_DIM = {96, 96, 116, 255};
+/* Roughly half a board cell at the default window size. Much smaller and the
+   queue stops reading as the same pieces that are about to arrive. */
+#define PREVIEW_CELL 18
+#define CHIP_HEIGHT 18
+#define SLOT_HEIGHT 52
+#define BOX_GAP 12
+
+/* Label, then value, then the space before whatever follows. */
+#define STAT_LABEL 8.5f
+#define STAT_LEAD 13.0f
+#define STAT_GAP 15.0f
+
+/* Deliberately neutral. Every colour on this screen should come from the
+   blocks, so the chrome carries no hue of its own. */
+static const Color INK_SOFT = {216, 216, 216, 255};
+static const Color COLOR_MUTED = {168, 168, 168, 255};
+static const Color COLOR_DIM = {136, 136, 136, 255};
+static const Color HAIRLINE = {255, 255, 255, 34};
+static const Color CHIP_FILL = {226, 226, 226, 255};
+static const Color CHIP_INK = {14, 14, 16, 255};
 
 static Color mode_accent(GameMode mode) {
     switch (mode) {
@@ -106,10 +130,14 @@ static void draw_fitted(const Texture2D *texture, ThemeFit fit, Rectangle dest, 
     DrawTexturePro(*texture, source, dest, (Vector2){0.0f, 0.0f}, 0.0f, tint);
 }
 
+static bool surface_is_visible(const ThemeSurface *surface) {
+    return surface->texture_loaded || surface->fill.a > 0 || surface->border_width > 0.0f;
+}
+
 static void draw_surface(const ThemeSurface *surface, Rectangle rect, Color border) {
     if (surface->texture_loaded) {
         draw_fitted(&surface->texture, surface->fit, rect, WHITE);
-    } else {
+    } else if (surface->fill.a > 0) {
         ui_rounded(rect, surface->radius, surface->fill);
     }
 
@@ -134,14 +162,25 @@ static void draw_ghost_block(const Theme *theme, PieceType piece, Rectangle dest
         dest.height - CELL_GAP * 2.0f,
     };
 
-    DrawRectangleRounded(inner, 0.18f, 6, Fade(color, opacity * 0.12f));
-    DrawRectangleRoundedLinesEx(inner, 0.18f, 6, 2.0f, Fade(color, opacity));
+    DrawRectangleRec(inner, Fade(color, opacity * 0.10f));
+    DrawRectangleLinesEx(inner, 1.0f, Fade(color, opacity));
 }
 
-static void draw_piece_preview(const Theme *theme, PieceType piece, Rectangle box) {
-    draw_surface(&theme->panel, box, Fade(theme->panel.border, 0.8f));
+/* Label inverted into a bar across the top of the box. */
+static Rectangle draw_labelled_box(const Theme *theme, const char *label, Rectangle box) {
+    if (surface_is_visible(&theme->panel)) {
+        draw_surface(&theme->panel, box, theme->panel.border);
+    }
 
+    DrawRectangleRec((Rectangle){box.x, box.y, box.width, CHIP_HEIGHT}, CHIP_FILL);
+    ui_label(label, box.x + 6.0f, box.y + 5.0f, 8.5f, CHIP_INK);
+
+    return (Rectangle){box.x, box.y + CHIP_HEIGHT, box.width, box.height - CHIP_HEIGHT};
+}
+
+static void draw_piece_preview(const Theme *theme, PieceType piece, Rectangle slot) {
     const PieceCell *shape = game_piece_shape(piece, 0);
+
     if (shape == NULL) {
         return;
     }
@@ -158,8 +197,8 @@ static void draw_piece_preview(const Theme *theme, PieceType piece, Rectangle bo
 
     const float piece_w = (float)(max_x - min_x + 1) * PREVIEW_CELL;
     const float piece_h = (float)(max_y - min_y + 1) * PREVIEW_CELL;
-    const float origin_x = box.x + (box.width - piece_w) * 0.5f - (float)min_x * PREVIEW_CELL;
-    const float origin_y = box.y + (box.height - piece_h) * 0.5f - (float)min_y * PREVIEW_CELL;
+    const float origin_x = slot.x + (slot.width - piece_w) * 0.5f - (float)min_x * PREVIEW_CELL;
+    const float origin_y = slot.y + (slot.height - piece_h) * 0.5f - (float)min_y * PREVIEW_CELL;
 
     for (int i = 0; i < 4; i++) {
         const Rectangle dest = {
@@ -173,14 +212,10 @@ static void draw_piece_preview(const Theme *theme, PieceType piece, Rectangle bo
     }
 }
 
-static void draw_stat(const char *label, const char *value, float x, float y, Color value_color) {
-    ui_label(label, x, y, 11.0f, COLOR_DIM);
-    ui_text_mono(value, x, y + 15.0f, 25.0f, value_color);
-}
-
 BoardLayout render_board_layout(int window_width, int window_height) {
-    const int available_width = window_width - SIDE_PANEL_WIDTH - 48;
-    const int available_height = window_height - 56;
+    const int chrome = EDGE_MARGIN * 2 + COLUMN_GUTTER + SIDE_COLUMN;
+    const int available_width = window_width - chrome;
+    const int available_height = window_height - TOP_MARGIN - BOTTOM_MARGIN;
 
     int cell_size = available_width / BOARD_COLS;
     const int height_cell = available_height / BOARD_ROWS;
@@ -189,16 +224,21 @@ BoardLayout render_board_layout(int window_width, int window_height) {
         cell_size = height_cell;
     }
 
-    if (cell_size < 12) {
-        cell_size = 12;
+    if (cell_size < 10) {
+        cell_size = 10;
     }
 
     const int board_width = cell_size * BOARD_COLS;
     const int board_height = cell_size * BOARD_ROWS;
 
+    /* The board and its column are centred as one block, so the board sits
+       slightly left of the window centre rather than the whole layout hugging
+       an edge. */
+    const int group_width = board_width + COLUMN_GUTTER + SIDE_COLUMN;
+
     return (BoardLayout){
-        (window_width - SIDE_PANEL_WIDTH - board_width) / 2,
-        (window_height - board_height) / 2,
+        (window_width - group_width) / 2,
+        TOP_MARGIN + (available_height - board_height) / 2,
         cell_size,
     };
 }
@@ -222,7 +262,11 @@ void render_background(const Theme *theme, int window_width, int window_height) 
 
     case THEME_BACKDROP_SHADER: {
         const float time = (float)GetTime();
-        const float resolution[2] = {(float)window_width, (float)window_height};
+
+        /* Framebuffer pixels rather than logical points. A backdrop shader has
+           to work from gl_FragCoord, which counts real pixels, and on a Retina
+           display the two differ by a factor of two. */
+        const float resolution[2] = {(float)GetRenderWidth(), (float)GetRenderHeight()};
 
         SetShaderValue(backdrop->program, backdrop->loc_time, &time, SHADER_UNIFORM_FLOAT);
         SetShaderValue(backdrop->program, backdrop->loc_resolution, resolution, SHADER_UNIFORM_VEC2);
@@ -241,17 +285,12 @@ void render_background(const Theme *theme, int window_width, int window_height) 
 
 static void render_well(const RenderContext *context, const BoardLayout *layout) {
     const Theme *theme = context->theme;
-    const Color accent = mode_accent(context->game->mode);
     const Rectangle frame = {
-        (float)(layout->x - WELL_PADDING),
-        (float)(layout->y - WELL_PADDING),
-        (float)(layout->cell_size * BOARD_COLS + WELL_PADDING * 2),
-        (float)(layout->cell_size * BOARD_ROWS + WELL_PADDING * 2),
+        (float)layout->x,
+        (float)layout->y,
+        (float)(layout->cell_size * BOARD_COLS),
+        (float)(layout->cell_size * BOARD_ROWS),
     };
-    const Color border =
-        theme->well.border_is_override ? theme->well.border : Fade(accent, 0.35f);
-
-    ui_shadow(frame, theme->well.radius, 10.0f, 0.55f);
 
     if (theme->well.texture_loaded) {
         draw_fitted(&theme->well.texture, theme->well.fit, frame, WHITE);
@@ -260,30 +299,20 @@ static void render_well(const RenderContext *context, const BoardLayout *layout)
     }
 
     /* Faint grid so an empty well still reads as a playfield. */
-    const Color grid = Fade(WHITE, 0.035f);
+    const Color grid = Fade(WHITE, 0.045f);
 
     for (int col = 1; col < BOARD_COLS; col++) {
         const float x = (float)(layout->x + col * layout->cell_size);
-        DrawLineEx(
-            (Vector2){x, (float)layout->y},
-            (Vector2){x, (float)(layout->y + layout->cell_size * BOARD_ROWS)},
-            1.0f,
-            grid
-        );
+        DrawLineEx((Vector2){x, frame.y}, (Vector2){x, frame.y + frame.height}, 1.0f, grid);
     }
 
     for (int row = 1; row < BOARD_ROWS; row++) {
         const float y = (float)(layout->y + row * layout->cell_size);
-        DrawLineEx(
-            (Vector2){(float)layout->x, y},
-            (Vector2){(float)(layout->x + layout->cell_size * BOARD_COLS), y},
-            1.0f,
-            grid
-        );
+        DrawLineEx((Vector2){frame.x, y}, (Vector2){frame.x + frame.width, y}, 1.0f, grid);
     }
 
     if (theme->well.border_width > 0.0f) {
-        ui_rounded_outline(frame, theme->well.radius, theme->well.border_width, border);
+        ui_rounded_outline(frame, theme->well.radius, theme->well.border_width, theme->well.border);
     }
 }
 
@@ -332,98 +361,163 @@ static void render_active_piece(const RenderContext *context, const BoardLayout 
     }
 }
 
-static void render_side_panel(const RenderContext *context, float panel_x, float panel_y) {
+typedef struct {
+    const char *label;
+    char value[24];
+    float size;
+    Color tone;
+} Stat;
+
+/* Bottom aligned against the well, so the column reads as one thing anchored at
+   both ends rather than a stack that trails off. */
+static void draw_stats(const RenderContext *context, float x, float bottom) {
     const GameState *game = context->game;
-    const Theme *theme = context->theme;
     const Color accent = mode_accent(game->mode);
 
-    char time_text[32];
-    scores_format_time(game->elapsed_seconds, time_text, (int)sizeof(time_text));
+    Stat stats[3];
+    int count = 0;
 
-    ui_label(game_mode_name(game->mode), panel_x, panel_y, 12.0f, accent);
-
-    float cursor_y = panel_y + 24.0f;
-    ui_label("Hold", panel_x, cursor_y, 11.0f, COLOR_DIM);
-    draw_piece_preview(
-        theme,
-        game->hold,
-        (Rectangle){panel_x, cursor_y + 15.0f, PREVIEW_BOX_WIDTH, PREVIEW_BOX_HEIGHT}
-    );
-
-    cursor_y += 15.0f + PREVIEW_BOX_HEIGHT + 16.0f;
-    ui_label("Next", panel_x, cursor_y, 11.0f, COLOR_DIM);
-    cursor_y += 15.0f;
-
-    for (int i = 0; i < NEXT_QUEUE_SIZE; i++) {
-        draw_piece_preview(
-            theme,
-            game->next_queue[i],
-            (Rectangle){panel_x, cursor_y, PREVIEW_BOX_WIDTH, PREVIEW_BOX_HEIGHT}
-        );
-        cursor_y += PREVIEW_BOX_HEIGHT + 6.0f;
-    }
-
-    cursor_y += 16.0f;
+    char elapsed[24];
+    scores_format_time(game->elapsed_seconds, elapsed, (int)sizeof(elapsed));
 
     switch (game->mode) {
     case GAME_MODE_SPRINT:
-        draw_stat("Time", time_text, panel_x, cursor_y, accent);
-        draw_stat("Lines left", TextFormat("%d", game_lines_remaining(game)), panel_x, cursor_y + 50.0f, RAYWHITE);
+        stats[count].label = "lines";
+        snprintf(stats[count].value, sizeof(stats[count].value), "%d/%d", game->lines_cleared,
+                 SPRINT_LINE_GOAL);
+        stats[count].size = 16.0f;
+        stats[count++].tone = INK_SOFT;
+
+        stats[count].label = "time";
+        snprintf(stats[count].value, sizeof(stats[count].value), "%s", elapsed);
+        stats[count].size = 22.0f;
+        stats[count++].tone = accent;
         break;
+
     case GAME_MODE_ZEN:
-        draw_stat("Lines", TextFormat("%d", game->lines_cleared), panel_x, cursor_y, RAYWHITE);
-        draw_stat("Speed", TextFormat("%d", game->level), panel_x, cursor_y + 50.0f, accent);
-        draw_stat("Time", time_text, panel_x, cursor_y + 100.0f, COLOR_MUTED);
+        stats[count].label = "time";
+        snprintf(stats[count].value, sizeof(stats[count].value), "%s", elapsed);
+        stats[count].size = 16.0f;
+        stats[count++].tone = INK_SOFT;
+
+        stats[count].label = "lines";
+        snprintf(stats[count].value, sizeof(stats[count].value), "%d", game->lines_cleared);
+        stats[count].size = 22.0f;
+        stats[count++].tone = accent;
         break;
+
     default:
-        draw_stat("Score", TextFormat("%d", game->score), panel_x, cursor_y, RAYWHITE);
-        draw_stat("Lines", TextFormat("%d", game->lines_cleared), panel_x, cursor_y + 50.0f, COLOR_MUTED);
-        draw_stat("Level", TextFormat("%d", game->level), panel_x, cursor_y + 100.0f, accent);
+        stats[count].label = "level";
+        snprintf(stats[count].value, sizeof(stats[count].value), "%d", game->level);
+        stats[count].size = 16.0f;
+        stats[count++].tone = INK_SOFT;
+
+        stats[count].label = "lines";
+        snprintf(stats[count].value, sizeof(stats[count].value), "%d", game->lines_cleared);
+        stats[count].size = 16.0f;
+        stats[count++].tone = INK_SOFT;
+
+        stats[count].label = "score";
+        snprintf(stats[count].value, sizeof(stats[count].value), "%d", game->score);
+        stats[count].size = 22.0f;
+        stats[count++].tone = accent;
         break;
+    }
+
+    float height = 0.0f;
+
+    for (int i = 0; i < count; i++) {
+        height += STAT_LEAD + stats[i].size + (i + 1 < count ? STAT_GAP : 0.0f);
+    }
+
+    float y = bottom - height;
+
+    for (int i = 0; i < count; i++) {
+        ui_label(stats[i].label, x, y, STAT_LABEL, COLOR_DIM);
+        ui_text_mono(stats[i].value, x, y + STAT_LEAD, stats[i].size, stats[i].tone);
+        y += STAT_LEAD + stats[i].size + STAT_GAP;
     }
 }
 
+static void render_side_column(const RenderContext *context, const BoardLayout *layout) {
+    const GameState *game = context->game;
+    const Theme *theme = context->theme;
+    const float x = (float)(layout->x + layout->cell_size * BOARD_COLS) + COLUMN_GUTTER;
+
+    const Rectangle hold_box = {x, (float)layout->y, SIDE_COLUMN, CHIP_HEIGHT + SLOT_HEIGHT};
+
+    draw_piece_preview(theme, game->hold, draw_labelled_box(theme, "hold", hold_box));
+
+    const Rectangle next_box = {
+        x,
+        hold_box.y + hold_box.height + BOX_GAP,
+        SIDE_COLUMN,
+        CHIP_HEIGHT + SLOT_HEIGHT * NEXT_QUEUE_SIZE,
+    };
+    const Rectangle body = draw_labelled_box(theme, "next", next_box);
+
+    for (int i = 0; i < NEXT_QUEUE_SIZE; i++) {
+        const float slot_y = body.y + (float)i * SLOT_HEIGHT;
+
+        if (i > 0) {
+            ui_hairline(body.x + 8.0f, slot_y, body.width - 16.0f, HAIRLINE);
+        }
+
+        draw_piece_preview(
+            theme, game->next_queue[i], (Rectangle){body.x, slot_y, body.width, SLOT_HEIGHT});
+    }
+
+    draw_stats(context, x, (float)(layout->y + layout->cell_size * BOARD_ROWS));
+}
+
+/* Centred type on a full bleed scrim rather than a panel. A box here would put
+   a second frame inside a window that already has one. */
 static void render_result_overlay(const RenderContext *context) {
     const GameState *game = context->game;
     const Color accent = mode_accent(game->mode);
-    const Rectangle box = {
-        (float)(context->window_width - 320) * 0.5f,
-        (float)(context->window_height - 190) * 0.5f,
-        320.0f,
-        190.0f,
-    };
+    const float center_x = (float)context->window_width * 0.5f;
+    const float rule_width = 150.0f;
 
-    DrawRectangle(0, 0, context->window_width, context->window_height, Fade(BLACK, 0.62f));
-    ui_shadow(box, 14.0f, 12.0f, 0.7f);
-    ui_panel(box, 14.0f, (Color){26, 26, 34, 250}, Fade(accent, 0.5f));
+    DrawRectangle(0, 0, context->window_width, context->window_height, Fade(BLACK, 0.80f));
 
-    const float center_x = box.x + box.width * 0.5f;
+    float y = (float)context->window_height * 0.5f - 96.0f;
 
-    ui_text_center(game->complete ? "40 Lines Complete" : "Game Over", center_x, box.y + 26.0f, 26.0f, RAYWHITE);
+    const char *eyebrow = game_mode_name(game->mode);
+    ui_label(eyebrow, center_x - ui_measure_label(eyebrow, 9.5f).x * 0.5f, y, 9.5f, accent);
+    y += 22.0f;
+
+    ui_text_center(game->complete ? "Complete" : "Game Over", center_x, y, 30.0f, RAYWHITE);
+    y += 42.0f;
+
+    ui_hairline(center_x - rule_width * 0.5f, y, rule_width, HAIRLINE);
+    y += 20.0f;
 
     if (game->complete) {
         char detail[64];
         scores_format_time(game->elapsed_seconds, detail, (int)sizeof(detail));
 
-        const Vector2 measured = ui_measure_mono(detail, 44.0f);
-        ui_text_mono(detail, center_x - measured.x * 0.5f, box.y + 66.0f, 44.0f, accent);
+        ui_text_mono(detail, center_x - ui_measure_mono(detail, 40.0f).x * 0.5f, y, 40.0f, accent);
+        y += 50.0f;
     } else {
-        ui_text_center(TextFormat("Score %d", game->score), center_x, box.y + 70.0f, 22.0f, RAYWHITE);
-        ui_text_center(TextFormat("%d lines - level %d", game->lines_cleared, game->level),
-                       center_x, box.y + 98.0f, 15.0f, COLOR_MUTED);
+        const char *score = TextFormat("%d", game->score);
+
+        ui_text_mono(score, center_x - ui_measure_mono(score, 36.0f).x * 0.5f, y, 36.0f, RAYWHITE);
+        y += 44.0f;
+
+        const char *detail = TextFormat("%d lines      level %d", game->lines_cleared, game->level);
+        ui_label(detail, center_x - ui_measure_label(detail, 9.5f).x * 0.5f, y, 9.5f, COLOR_MUTED);
+        y += 22.0f;
     }
 
     if (context->score_rank >= 0) {
-        ui_text_center(
-            TextFormat("New best - rank %d", context->score_rank + 1),
-            center_x,
-            box.y + 122.0f,
-            15.0f,
-            (Color){255, 210, 120, 255}
-        );
+        const char *best = TextFormat("new best      rank %d", context->score_rank + 1);
+        ui_label(best, center_x - ui_measure_label(best, 9.5f).x * 0.5f, y, 9.5f,
+                 (Color){255, 210, 120, 255});
     }
 
-    ui_text_center("Enter to retry     Esc for menu", center_x, box.y + box.height - 30.0f, 14.0f, COLOR_DIM);
+    ui_label("enter to retry      esc for menu",
+             center_x - ui_measure_label("enter to retry      esc for menu", 9.0f).x * 0.5f,
+             (float)context->window_height * 0.5f + 104.0f, 9.0f, COLOR_DIM);
 }
 
 /* Ring that fills clockwise while Esc is held, so a stray tap cannot end a run. */
@@ -440,40 +534,35 @@ static void render_quit_progress(const RenderContext *context) {
     };
 
     DrawRectangle(0, 0, context->window_width, context->window_height, Fade(BLACK, 0.4f + 0.3f * progress));
-    DrawRing(center, 44.0f, 54.0f, 0.0f, 360.0f, 64, Fade(WHITE, 0.12f));
-    DrawRing(center, 44.0f, 54.0f, -90.0f, -90.0f + 360.0f * progress, 64, (Color){240, 96, 96, 255});
+    DrawRing(center, 40.0f, 44.0f, 0.0f, 360.0f, 64, Fade(WHITE, 0.10f));
+    DrawRing(center, 40.0f, 44.0f, -90.0f, -90.0f + 360.0f * progress, 64, (Color){236, 100, 100, 255});
 
-    ui_text_center("Hold Esc to quit", center.x, center.y + 74.0f, 17.0f, RAYWHITE);
+    ui_label("hold esc to quit", center.x - ui_measure_label("hold esc to quit", 9.5f).x * 0.5f,
+             center.y + 66.0f, 9.5f, COLOR_MUTED);
 }
 
 void render_game(const RenderContext *context) {
     const BoardLayout layout = render_board_layout(context->window_width, context->window_height);
 
+    /* Hung off the top left corner of the well rather than centred over the
+       window, which would put it out of line with everything below it. */
+    ui_label(game_mode_name(context->game->mode), (float)layout.x, (float)layout.y - 16.0f, 9.0f,
+             INK_SOFT);
+
     render_well(context, &layout);
     render_stack(context, &layout);
     render_active_piece(context, &layout);
-    render_side_panel(
-        context,
-        (float)(layout.x + layout.cell_size * BOARD_COLS + 26),
-        (float)layout.y
-    );
+    render_side_column(context, &layout);
 
     if (context->game->paused && !game_is_finished(context->game)) {
-        DrawRectangle(0, 0, context->window_width, context->window_height, Fade(BLACK, 0.6f));
-        ui_text_center(
-            "Paused",
-            (float)context->window_width * 0.5f,
-            (float)context->window_height * 0.5f - 20.0f,
-            34.0f,
-            RAYWHITE
-        );
-        ui_text_center(
-            "P to resume",
-            (float)context->window_width * 0.5f,
-            (float)context->window_height * 0.5f + 22.0f,
-            15.0f,
-            COLOR_MUTED
-        );
+        const float center_x = (float)context->window_width * 0.5f;
+        const float center_y = (float)context->window_height * 0.5f;
+
+        DrawRectangle(0, 0, context->window_width, context->window_height, Fade(BLACK, 0.72f));
+        ui_text_center("Paused", center_x, center_y - 26.0f, 30.0f, RAYWHITE);
+        ui_hairline(center_x - 60.0f, center_y + 14.0f, 120.0f, HAIRLINE);
+        ui_label("p to resume", center_x - ui_measure_label("p to resume", 9.5f).x * 0.5f,
+                 center_y + 28.0f, 9.5f, COLOR_MUTED);
     }
 
     if (game_is_finished(context->game)) {

@@ -1,7 +1,7 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define GAME_TITLE "Puzzie"
+#define GAME_TITLE "Metris"
 #define WINDOW_DEFAULT_WIDTH 540
 #define WINDOW_DEFAULT_HEIGHT 760
 

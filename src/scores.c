@@ -7,6 +7,8 @@
 #include <string.h>
 #include <time.h>
 
+/* On-disk format tag, deliberately left at the old name through the rename to
+   Metris so score files written before it still load. */
 #define SCORES_FILE_MAGIC "PUZZIE_SCORES"
 #define SCORES_FILE_VERSION 1
 #define SCORES_FILE "scores.txt"

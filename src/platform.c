@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
-#define APP_DATA_FOLDER "Puzzie"
+#define APP_DATA_FOLDER "Metris"
 
 bool platform_data_path(const char *relative, char *out, int out_size) {
     const char *home = getenv("HOME");

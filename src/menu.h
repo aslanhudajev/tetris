@@ -20,10 +20,17 @@ typedef enum {
     MENU_SCREEN_THEMES,
 } MenuScreen;
 
+/* Enough for the longest list any screen shows: the theme library. */
+#define MENU_MAX_ROWS THEME_MAX_COUNT
+
 typedef struct {
     MenuScreen screen;
     GameMode pending_mode;
     int selected_level;
+
+    /* Eased 0..1 hover weight per row of the current screen, cleared on every
+       screen change so a row cannot inherit the glow of whatever it replaced. */
+    float hover[MENU_MAX_ROWS];
 } MenuState;
 
 typedef struct {

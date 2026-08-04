@@ -69,12 +69,19 @@ void ui_fonts_load(void) {
     const int ui_count = (int)(sizeof(UI_FONT_CANDIDATES) / sizeof(UI_FONT_CANDIDATES[0]));
     const int mono_count = (int)(sizeof(MONO_FONT_CANDIDATES) / sizeof(MONO_FONT_CANDIDATES[0]));
 
-    font_small = load_first_available(UI_FONT_CANDIDATES, ui_count, ATLAS_SMALL, font_label);
-    font_large = load_first_available(UI_FONT_CANDIDATES, ui_count, ATLAS_LARGE, NULL);
-    font_mono = load_first_available(MONO_FONT_CANDIDATES, mono_count, ATLAS_MONO, NULL);
+    /* Sizes passed to the draw calls are logical points, and on a Retina
+       display raylib draws them through a 2x transform. Rasterising the atlas
+       at 1x would mean every glyph is magnified on the way to the screen, so
+       the atlas has to match the backing scale. */
+    const float dpi = GetWindowScaleDPI().y;
+    const int scale = dpi >= 1.5f ? 2 : 1;
+
+    font_small = load_first_available(UI_FONT_CANDIDATES, ui_count, ATLAS_SMALL * scale, font_label);
+    font_large = load_first_available(UI_FONT_CANDIDATES, ui_count, ATLAS_LARGE * scale, NULL);
+    font_mono = load_first_available(MONO_FONT_CANDIDATES, mono_count, ATLAS_MONO * scale, NULL);
 
     fonts_loaded = true;
-    TraceLog(LOG_INFO, "UI: interface font is %s", font_label);
+    TraceLog(LOG_INFO, "UI: interface font is %s, atlas at %dx", font_label, scale);
 }
 
 void ui_fonts_unload(void) {
@@ -123,19 +130,41 @@ void ui_text_shadowed(const char *text, float x, float y, float size, Color colo
     ui_text(text, x, y, size, color);
 }
 
-void ui_label(const char *text, float x, float y, float size, Color color) {
-    const Font font = pick_font(size);
-    const float spacing = size * 0.16f;
-    char upper[64];
+#define LABEL_MAX 128
 
-    TextCopy(upper, text);
-    for (int i = 0; upper[i] != '\0'; i++) {
-        if (upper[i] >= 'a' && upper[i] <= 'z') {
-            upper[i] = (char)(upper[i] - 'a' + 'A');
-        }
+/* Bounded on purpose: raylib's TextCopy runs to the terminator, and some of
+   this text comes out of theme files, so the length is not ours to trust. */
+static const char *to_upper(const char *text, char *buffer, int size) {
+    int i = 0;
+
+    for (; text[i] != '\0' && i < size - 1; i++) {
+        buffer[i] = (text[i] >= 'a' && text[i] <= 'z') ? (char)(text[i] - 'a' + 'A') : text[i];
     }
 
-    DrawTextEx(font, upper, (Vector2){x, y}, size, spacing, color);
+    buffer[i] = '\0';
+    return buffer;
+}
+
+static float label_spacing(float size) {
+    return size * 0.16f;
+}
+
+void ui_label(const char *text, float x, float y, float size, Color color) {
+    char upper[LABEL_MAX];
+
+    DrawTextEx(
+        pick_font(size),
+        to_upper(text, upper, LABEL_MAX),
+        (Vector2){x, y},
+        size,
+        label_spacing(size),
+        color
+    );
+}
+
+Vector2 ui_measure_label(const char *text, float size) {
+    char upper[LABEL_MAX];
+    return MeasureTextEx(pick_font(size), to_upper(text, upper, LABEL_MAX), size, label_spacing(size));
 }
 
 /* raylib expresses corner rounding as a fraction of the shorter side, so
@@ -159,33 +188,39 @@ void ui_rounded_outline(Rectangle rect, float radius, float thickness, Color col
     DrawRectangleRoundedLinesEx(rect, roundness_for(rect, radius), 8, thickness, color);
 }
 
-/* Stacked translucent rounded rects: cheap and good enough for a soft edge
-   without pulling in a blur shader. */
-void ui_shadow(Rectangle rect, float radius, float spread, float alpha) {
-    const int steps = (int)spread;
-
-    for (int i = steps; i >= 1; i--) {
-        const float grow = (float)i;
-        const float falloff = 1.0f - (float)i / (float)(steps + 1);
-        const Rectangle expanded = {
-            rect.x - grow,
-            rect.y - grow + grow * 0.35f,
-            rect.width + grow * 2.0f,
-            rect.height + grow * 2.0f,
-        };
-
-        DrawRectangleRounded(
-            expanded,
-            roundness_for(expanded, radius + grow),
-            8,
-            Fade(BLACK, alpha * falloff * falloff * 0.5f)
-        );
-    }
+void ui_hairline(float x, float y, float width, Color color) {
+    DrawRectangleRec((Rectangle){x, y, width, 1.0f}, color);
 }
 
-void ui_panel(Rectangle rect, float radius, Color fill, Color border) {
-    ui_rounded(rect, radius, fill);
-    ui_rounded_outline(rect, radius, 1.5f, border);
+/* Vertex order here is topLeft, bottomLeft, bottomRight, topRight. */
+void ui_wash(Rectangle rect, Color color, float alpha) {
+    const Color near_edge = Fade(color, alpha);
+    const Color far_edge = Fade(color, 0.0f);
+
+    DrawRectangleGradientEx(rect, near_edge, near_edge, far_edge, far_edge);
+}
+
+void ui_scrim(int width, int height, float strength) {
+    const float w = (float)width;
+    const float h = (float)height;
+
+    DrawRectangleRec((Rectangle){0.0f, 0.0f, w, h}, Fade(BLACK, 0.26f * strength));
+
+    /* Heavier at the edges than the middle, so the header and footer type sits
+       on something solid while the backdrop still reads in the centre. */
+    DrawRectangleGradientV(0, 0, width, (int)(h * 0.32f), Fade(BLACK, 0.40f * strength), BLANK);
+    DrawRectangleGradientV(
+        0, (int)(h * 0.62f), width, (int)(h * 0.38f) + 1, BLANK, Fade(BLACK, 0.46f * strength));
+}
+
+float ui_approach(float current, float target, float rate, float dt) {
+    float step = rate * dt;
+
+    if (step > 1.0f) {
+        step = 1.0f;
+    }
+
+    return current + (target - current) * step;
 }
 
 Color ui_mix(Color a, Color b, float t) {

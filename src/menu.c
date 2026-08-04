@@ -7,153 +7,260 @@
 #include <raylib.h>
 #include <string.h>
 
-#define MAIN_BUTTON_COUNT 6
-#define LEVEL_GRID_COLS 5
-#define LEVEL_BUTTON_SIZE 56
-#define LEVEL_BUTTON_GAP 9
-#define THEME_ROW_WIDTH 380
-#define THEME_ROW_HEIGHT 58
-#define THEME_ROW_GAP 8
+/* The menu is a left aligned index rather than a stack of buttons: one margin
+   for everything to line up against, rows that run the full width, and
+   hairlines instead of boxes. Nothing draws a border, a bevel or a drop
+   shadow, which leaves colour free to mean something on its own. */
+#define MARGIN 30.0f
+#define HEADER_HEIGHT 96.0f
+#define FOOTER_HEIGHT 54.0f
+#define ROW_HEIGHT 62.0f
 
-static const Color COLOR_MUTED = {132, 132, 152, 255};
-static const Color COLOR_DIM = {96, 96, 116, 255};
-static const Color ACCENT = {124, 196, 255, 255};
+/* Label column, clear of the mark chip in the left margin. */
+#define GUTTER 50.0f
+#define CHIP_WIDTH 36.0f
+#define CHIP_HEIGHT 24.0f
+
+#define MAIN_ROW_COUNT 6
+#define LEVEL_GRID_COLS 5
+#define LEVEL_CELL 52.0f
+#define LEVEL_GAP 8.0f
+#define SWATCH 9.0f
+#define SWATCH_GAP 3.0f
+
+/* Neutral greys, no blue cast: the row accents are the only hue in the
+   interface. Secondary tones sit at roughly 4.5:1 against the scrimmed
+   backdrop, which is the floor for text this small. */
+static const Color INK = {244, 244, 244, 255};
+static const Color INK_SOFT = {216, 216, 216, 255};
+static const Color MUTED = {184, 184, 184, 255};
+static const Color DIM = {148, 148, 148, 255};
+static const Color HAIRLINE = {255, 255, 255, 34};
+
+/* Every screen indexes hover state by row, so the longest list has to fit. */
+_Static_assert(MAIN_ROW_COUNT <= MENU_MAX_ROWS, "main menu needs a hover slot per row");
+_Static_assert(MAX_START_LEVEL <= MENU_MAX_ROWS, "level grid needs a hover slot per cell");
 
 typedef struct {
+    /* Short tag for the chip on the left. The reference marks each row with an
+       abbreviation rather than an index, which gives the column something with
+       shape in it instead of a row of numerals. */
+    const char *mark;
     const char *label;
     const char *hint;
     Color accent;
 } MainEntry;
 
-static const MainEntry MAIN_ENTRIES[MAIN_BUTTON_COUNT] = {
-    {"40 Lines", "Clear 40 lines as fast as you can", {96, 214, 255, 255}},
-    {"Zen", "One speed, forever, no game over", {178, 150, 255, 255}},
-    {"Marathon", "Speeds up every 10 lines", {255, 186, 92, 255}},
-    {"Themes", "Change how the blocks look", {150, 220, 170, 255}},
-    {"High Scores", "Best times and scores", {200, 200, 220, 255}},
-    {"Quit", NULL, {200, 120, 120, 255}},
+static const MainEntry MAIN_ENTRIES[MAIN_ROW_COUNT] = {
+    {"40L", "40 Lines", "Clear forty lines against the clock", {96, 214, 255, 255}},
+    {"ZEN", "Zen", "One speed, no game over", {178, 150, 255, 255}},
+    {"MAR", "Marathon", "Gets faster every ten lines", {255, 186, 92, 255}},
+    {"THM", "Themes", "Change how the blocks look", {150, 220, 170, 255}},
+    {"REC", "High Scores", "Best times and scores", {214, 214, 214, 255}},
+    {"EXT", "Quit", "Close the game", {228, 122, 122, 255}},
 };
 
-static Rectangle main_button_rect(int index, int window_width, int window_height) {
-    const float width = 280.0f;
-    const float height = 46.0f;
-    const float gap = 10.0f;
-    const float total = MAIN_BUTTON_COUNT * height + (MAIN_BUTTON_COUNT - 1) * gap;
-    const float start_y = (float)window_height * 0.5f - total * 0.5f + 52.0f;
+/* Layout ------------------------------------------------------------------ */
+
+static float content_top(void) {
+    return HEADER_HEIGHT;
+}
+
+static float content_bottom(int window_height) {
+    return (float)window_height - FOOTER_HEIGHT;
+}
+
+static Rectangle row_rect(int index, int count, int window_width, int window_height) {
+    const float top = content_top();
+    const float span = content_bottom(window_height) - top;
+    const float total = (float)count * ROW_HEIGHT;
+    float start = top + (span - total) * 0.5f;
+
+    if (start < top) {
+        start = top;
+    }
 
     return (Rectangle){
-        (float)window_width * 0.5f - width * 0.5f,
-        start_y + (float)index * (height + gap),
-        width,
-        height,
+        MARGIN,
+        start + (float)index * ROW_HEIGHT,
+        (float)window_width - MARGIN * 2.0f,
+        ROW_HEIGHT,
     };
 }
 
-static Rectangle level_button_rect(int index, int window_width, int window_height) {
+static Rectangle level_rect(int index, int window_width, int window_height) {
     const int rows = (MAX_START_LEVEL + LEVEL_GRID_COLS - 1) / LEVEL_GRID_COLS;
-    const int grid_width = LEVEL_GRID_COLS * LEVEL_BUTTON_SIZE + (LEVEL_GRID_COLS - 1) * LEVEL_BUTTON_GAP;
-    const int grid_height = rows * LEVEL_BUTTON_SIZE + (rows - 1) * LEVEL_BUTTON_GAP;
+    const float grid_width = LEVEL_GRID_COLS * LEVEL_CELL + (LEVEL_GRID_COLS - 1) * LEVEL_GAP;
+    const float grid_height = (float)rows * LEVEL_CELL + (float)(rows - 1) * LEVEL_GAP;
+    const float top =
+        content_top() + (content_bottom(window_height) - content_top() - grid_height) * 0.5f;
 
     return (Rectangle){
-        (float)(window_width / 2 - grid_width / 2 + (index % LEVEL_GRID_COLS) * (LEVEL_BUTTON_SIZE + LEVEL_BUTTON_GAP)),
-        (float)(window_height / 2 - grid_height / 2 + (index / LEVEL_GRID_COLS) * (LEVEL_BUTTON_SIZE + LEVEL_BUTTON_GAP)),
-        (float)LEVEL_BUTTON_SIZE,
-        (float)LEVEL_BUTTON_SIZE,
+        (float)window_width * 0.5f - grid_width * 0.5f +
+            (float)(index % LEVEL_GRID_COLS) * (LEVEL_CELL + LEVEL_GAP),
+        top + (float)(index / LEVEL_GRID_COLS) * (LEVEL_CELL + LEVEL_GAP),
+        LEVEL_CELL,
+        LEVEL_CELL,
     };
 }
 
-static Rectangle theme_row_rect(int index, int count, int window_width, int window_height) {
-    const int total = count * THEME_ROW_HEIGHT + (count - 1) * THEME_ROW_GAP;
-
-    return (Rectangle){
-        (float)(window_width / 2 - THEME_ROW_WIDTH / 2),
-        (float)(window_height / 2 - total / 2 + index * (THEME_ROW_HEIGHT + THEME_ROW_GAP)),
-        (float)THEME_ROW_WIDTH,
-        (float)THEME_ROW_HEIGHT,
-    };
+/* Sits in the header where the wordmark is on the home screen. */
+static Rectangle back_rect(void) {
+    return (Rectangle){MARGIN - 10.0f, 24.0f, 112.0f, 30.0f};
 }
 
-static Rectangle back_button_rect(int window_width, int window_height) {
-    return (Rectangle){
-        (float)window_width * 0.5f - 72.0f,
-        (float)window_height - 88.0f,
-        144.0f,
-        40.0f,
-    };
+/* Input ------------------------------------------------------------------- */
+
+static bool hovering(Rectangle rect) {
+    return CheckCollisionPointRec(GetMousePosition(), rect);
 }
 
 static bool clicked(Rectangle rect) {
-    return CheckCollisionPointRec(GetMousePosition(), rect) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    return hovering(rect) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 }
 
-static void draw_surface(Rectangle rect, bool highlighted, Color accent) {
-    const bool hovered = CheckCollisionPointRec(GetMousePosition(), rect);
-    const bool pressed = hovered && IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+static float menu_delta(void) {
+    const float dt = GetFrameTime();
+    return dt > MAX_FRAME_DELTA ? MAX_FRAME_DELTA : dt;
+}
 
-    Color fill = (Color){38, 38, 50, 255};
-    Color border = (Color){66, 66, 84, 255};
+static void set_screen(MenuState *menu, MenuScreen screen) {
+    menu->screen = screen;
+    memset(menu->hover, 0, sizeof(menu->hover));
+}
 
-    if (highlighted) {
-        fill = ui_mix((Color){38, 38, 50, 255}, accent, 0.18f);
-        border = Fade(accent, 0.75f);
+static void track_hover(MenuState *menu, int index, bool is_hovered) {
+    if (index < 0 || index >= MENU_MAX_ROWS) {
+        return;
     }
 
-    if (hovered) {
-        fill = ui_mix(fill, accent, 0.28f);
-        border = accent;
+    menu->hover[index] =
+        ui_approach(menu->hover[index], is_hovered ? 1.0f : 0.0f, 15.0f, menu_delta());
+}
+
+static float hover_of(const MenuState *menu, int index) {
+    return (index >= 0 && index < MENU_MAX_ROWS) ? menu->hover[index] : 0.0f;
+}
+
+/* Drawing ----------------------------------------------------------------- */
+
+static void draw_chevron(float x, float y, float half, float thickness, Color color) {
+    DrawLineEx((Vector2){x, y - half}, (Vector2){x + half * 0.72f, y}, thickness, color);
+    DrawLineEx((Vector2){x + half * 0.72f, y}, (Vector2){x, y + half}, thickness, color);
+}
+
+static void draw_chevron_left(float x, float y, float half, float thickness, Color color) {
+    DrawLineEx((Vector2){x + half * 0.72f, y - half}, (Vector2){x, y}, thickness, color);
+    DrawLineEx((Vector2){x, y}, (Vector2){x + half * 0.72f, y + half}, thickness, color);
+}
+
+static void draw_home_header(int window_width) {
+    ui_label(GAME_TITLE, MARGIN, 46.0f, 25.0f, INK);
+    ui_hairline(MARGIN, HEADER_HEIGHT - 8.0f, (float)window_width - MARGIN * 2.0f, HAIRLINE);
+}
+
+static void draw_screen_header(int window_width, const char *title) {
+    const Color tone = hovering(back_rect()) ? INK : MUTED;
+
+    draw_chevron_left(MARGIN + 1.0f, 38.0f, 4.0f, 1.6f, tone);
+    ui_label("back", MARGIN + 13.0f, 33.0f, 9.0f, tone);
+    ui_label(title, MARGIN, 56.0f, 21.0f, INK);
+    ui_hairline(MARGIN, HEADER_HEIGHT - 8.0f, (float)window_width - MARGIN * 2.0f, HAIRLINE);
+}
+
+static void draw_footer(int window_width, int window_height, const char *left, const char *right) {
+    const float y = content_bottom(window_height);
+
+    ui_hairline(MARGIN, y, (float)window_width - MARGIN * 2.0f, HAIRLINE);
+
+    if (left != NULL) {
+        ui_label(left, MARGIN, y + 20.0f, 9.0f, DIM);
     }
 
-    if (pressed) {
-        fill = ui_mix(fill, BLACK, 0.2f);
+    if (right != NULL) {
+        ui_label(right, (float)window_width - MARGIN - ui_measure_label(right, 9.0f).x, y + 20.0f,
+                 9.0f, DIM);
     }
+}
 
-    if (!pressed) {
-        ui_shadow(rect, 10.0f, 5.0f, 0.4f);
-    }
+/* One row of the index. `weight` is the eased hover value and `marked` holds a
+   row lit when the pointer is elsewhere, for the current selection. */
+static void draw_row(
+    Rectangle rect,
+    const char *mark,
+    const char *label,
+    const char *hint,
+    Color accent,
+    float weight,
+    bool marked
+) {
+    const float lit = (marked && weight < 0.55f) ? 0.55f : weight;
 
-    ui_rounded(rect, 10.0f, fill);
-    ui_rounded_outline(rect, 10.0f, 1.5f, border);
+    /* Each row keeps a trace of its colour with the pointer elsewhere, so the
+       list reads as six distinct things rather than six identical lines. It
+       decays well before the right edge: a bar filled end to end is what made
+       the old buttons look heavy. */
+    Rectangle wash = rect;
+    wash.width *= 0.72f;
+    ui_wash(wash, accent, 0.045f + 0.19f * lit);
 
-    /* Thin sheen along the top edge keeps the buttons from looking like flat
-       grey slabs. */
-    DrawRectangleRounded(
-        (Rectangle){rect.x + 3.0f, rect.y + 2.0f, rect.width - 6.0f, rect.height * 0.42f},
-        0.6f,
-        6,
-        Fade(WHITE, hovered ? 0.07f : 0.04f)
+    ui_hairline(rect.x, rect.y + rect.height, rect.width, HAIRLINE);
+
+    const float indent = 7.0f * weight;
+    const Rectangle chip = {
+        rect.x + indent,
+        rect.y + rect.height * 0.5f - CHIP_HEIGHT * 0.5f,
+        CHIP_WIDTH,
+        CHIP_HEIGHT,
+    };
+
+    /* Square, and it fills as the row lights: the mark inverts to dark on the
+       accent rather than the accent brightening in place. */
+    DrawRectangleRec(chip, Fade(accent, 0.14f + 0.80f * lit));
+
+    const Vector2 mark_size = ui_measure_mono(mark, 12.0f);
+
+    ui_text_mono(
+        mark,
+        chip.x + chip.width * 0.5f - mark_size.x * 0.5f,
+        chip.y + chip.height * 0.5f - mark_size.y * 0.5f,
+        12.0f,
+        ui_mix(accent, (Color){14, 14, 16, 255}, lit)
     );
-}
 
-/* Keeps each row identifiable while the mouse is elsewhere, so the list does
-   not read as six identical grey slabs. */
-static void draw_accent_stripe(Rectangle rect, Color accent) {
-    DrawRectangleRounded(
-        (Rectangle){rect.x + 8.0f, rect.y + rect.height * 0.3f, 3.0f, rect.height * 0.4f},
-        1.0f,
-        4,
-        accent
-    );
-}
+    ui_text(label, rect.x + GUTTER + indent, rect.y + 13.0f, 23.0f, ui_mix(INK_SOFT, WHITE, weight));
 
-static void draw_button(Rectangle rect, const char *label, float font_size, bool highlighted, Color accent) {
-    draw_surface(rect, highlighted, accent);
-
-    const Vector2 measured = ui_measure(label, font_size);
-    ui_text(
-        label,
-        rect.x + rect.width * 0.5f - measured.x * 0.5f,
-        rect.y + rect.height * 0.5f - measured.y * 0.5f,
-        font_size,
-        RAYWHITE
-    );
-}
-
-static void draw_screen_title(const char *title, const char *subtitle, int window_width, float y) {
-    ui_text_center(title, (float)window_width * 0.5f, y, 36.0f, RAYWHITE);
-
-    if (subtitle != NULL) {
-        ui_text_center(subtitle, (float)window_width * 0.5f, y + 46.0f, 15.0f, COLOR_MUTED);
+    if (hint != NULL) {
+        ui_label(hint, rect.x + GUTTER + 1.0f + indent, rect.y + 43.0f, 9.0f,
+                 ui_mix(DIM, MUTED, lit));
     }
+
+    if (weight > 0.01f) {
+        draw_chevron(rect.x + rect.width - 14.0f + 4.0f * weight, rect.y + rect.height * 0.5f, 4.5f,
+                     1.7f, Fade(accent, weight));
+    }
+}
+
+static void draw_level_cell(Rectangle rect, int level, bool selected, float weight, Color accent) {
+    Color fill = Fade(WHITE, 0.05f + 0.06f * weight);
+    Color text = ui_mix(INK_SOFT, WHITE, weight);
+
+    if (selected) {
+        fill = Fade(accent, 0.92f);
+        text = (Color){16, 16, 22, 255};
+    }
+
+    DrawRectangleRec(rect, fill);
+
+    if (!selected && weight > 0.01f) {
+        DrawRectangleLinesEx(rect, 1.0f, Fade(accent, 0.5f * weight));
+    }
+
+    const char *value = TextFormat("%d", level);
+    const Vector2 size = ui_measure(value, 18.0f);
+
+    ui_text(value, rect.x + rect.width * 0.5f - size.x * 0.5f,
+            rect.y + rect.height * 0.5f - size.y * 0.5f, 18.0f, text);
 }
 
 static MenuAction empty_action(void) {
@@ -161,6 +268,8 @@ static MenuAction empty_action(void) {
     action.select_theme = -1;
     return action;
 }
+
+/* State ------------------------------------------------------------------- */
 
 void menu_init(MenuState *menu) {
     memset(menu, 0, sizeof(*menu));
@@ -170,14 +279,17 @@ void menu_init(MenuState *menu) {
 }
 
 void menu_open_main(MenuState *menu) {
-    menu->screen = MENU_SCREEN_MAIN;
+    set_screen(menu, MENU_SCREEN_MAIN);
 }
 
 static MenuAction update_main(MenuState *menu, int window_width, int window_height) {
     MenuAction action = empty_action();
 
-    for (int i = 0; i < MAIN_BUTTON_COUNT; i++) {
-        if (!clicked(main_button_rect(i, window_width, window_height))) {
+    for (int i = 0; i < MAIN_ROW_COUNT; i++) {
+        const Rectangle rect = row_rect(i, MAIN_ROW_COUNT, window_width, window_height);
+        track_hover(menu, i, hovering(rect));
+
+        if (!clicked(rect)) {
             continue;
         }
 
@@ -189,32 +301,51 @@ static MenuAction update_main(MenuState *menu, int window_width, int window_heig
             break;
         case 1:
             menu->pending_mode = GAME_MODE_ZEN;
-            menu->screen = MENU_SCREEN_LEVEL;
+            set_screen(menu, MENU_SCREEN_LEVEL);
             break;
         case 2:
             menu->pending_mode = GAME_MODE_MARATHON;
-            menu->screen = MENU_SCREEN_LEVEL;
+            set_screen(menu, MENU_SCREEN_LEVEL);
             break;
         case 3:
-            menu->screen = MENU_SCREEN_THEMES;
+            set_screen(menu, MENU_SCREEN_THEMES);
             break;
         case 4:
-            menu->screen = MENU_SCREEN_SCORES;
+            set_screen(menu, MENU_SCREEN_SCORES);
             break;
         default:
             action.quit = true;
             break;
         }
+
+        /* The screen may have changed, so the remaining rects are stale. */
+        break;
     }
 
     return action;
 }
 
+static bool leaving(MenuState *menu) {
+    if (clicked(back_rect()) || IsKeyPressed(KEY_ESCAPE)) {
+        set_screen(menu, MENU_SCREEN_MAIN);
+        return true;
+    }
+
+    return false;
+}
+
 static MenuAction update_level(MenuState *menu, int window_width, int window_height) {
     MenuAction action = empty_action();
 
+    if (leaving(menu)) {
+        return action;
+    }
+
     for (int i = 0; i < MAX_START_LEVEL; i++) {
-        if (clicked(level_button_rect(i, window_width, window_height))) {
+        const Rectangle rect = level_rect(i, window_width, window_height);
+        track_hover(menu, i, hovering(rect));
+
+        if (clicked(rect)) {
             menu->selected_level = i + 1;
             action.start_game = true;
             action.mode = menu->pending_mode;
@@ -222,30 +353,39 @@ static MenuAction update_level(MenuState *menu, int window_width, int window_hei
         }
     }
 
-    if (clicked(back_button_rect(window_width, window_height)) || IsKeyPressed(KEY_ESCAPE)) {
-        menu->screen = MENU_SCREEN_MAIN;
-    }
-
     return action;
 }
 
-static MenuAction update_themes(MenuState *menu, const ThemeLibrary *themes, int window_width, int window_height) {
+static MenuAction update_themes(
+    MenuState *menu,
+    const ThemeLibrary *themes,
+    int window_width,
+    int window_height
+) {
     MenuAction action = empty_action();
 
+    if (leaving(menu)) {
+        return action;
+    }
+
     for (int i = 0; i < themes->count; i++) {
-        if (clicked(theme_row_rect(i, themes->count, window_width, window_height))) {
+        const Rectangle rect = row_rect(i, themes->count, window_width, window_height);
+        track_hover(menu, i, hovering(rect));
+
+        if (clicked(rect)) {
             action.select_theme = i;
         }
     }
 
-    if (clicked(back_button_rect(window_width, window_height)) || IsKeyPressed(KEY_ESCAPE)) {
-        menu->screen = MENU_SCREEN_MAIN;
-    }
-
     return action;
 }
 
-MenuAction menu_update(MenuState *menu, const ThemeLibrary *themes, int window_width, int window_height) {
+MenuAction menu_update(
+    MenuState *menu,
+    const ThemeLibrary *themes,
+    int window_width,
+    int window_height
+) {
     MenuAction action = empty_action();
 
     switch (menu->screen) {
@@ -259,160 +399,157 @@ MenuAction menu_update(MenuState *menu, const ThemeLibrary *themes, int window_w
         action = update_themes(menu, themes, window_width, window_height);
         break;
     case MENU_SCREEN_SCORES:
-        if (clicked(back_button_rect(window_width, window_height)) || IsKeyPressed(KEY_ESCAPE)) {
-            menu->screen = MENU_SCREEN_MAIN;
-        }
+        leaving(menu);
         break;
     }
 
     return action;
 }
 
-static void draw_main(int window_width, int window_height) {
-    const float center_x = (float)window_width * 0.5f;
-    const float title_y = (float)window_height * 0.5f - 214.0f;
-    const Vector2 title_size = ui_measure(GAME_TITLE, 58.0f);
+/* Screens ----------------------------------------------------------------- */
 
-    ui_text_shadowed(GAME_TITLE, center_x - title_size.x * 0.5f, title_y, 58.0f, RAYWHITE);
-    DrawRectangleRounded(
-        (Rectangle){center_x - 28.0f, title_y + title_size.y + 12.0f, 56.0f, 3.0f},
-        1.0f,
-        4,
-        Fade(ACCENT, 0.8f)
-    );
-    ui_label("offline tetris", center_x - ui_measure("OFFLINE TETRIS", 12.0f).x * 0.5f - 10.0f,
-             title_y + title_size.y + 26.0f, 12.0f, COLOR_DIM);
+static void draw_main(const MenuState *menu, int window_width, int window_height) {
+    draw_home_header(window_width);
 
-    const Vector2 mouse = GetMousePosition();
-    const char *hint = NULL;
+    for (int i = 0; i < MAIN_ROW_COUNT; i++) {
+        const Rectangle rect = row_rect(i, MAIN_ROW_COUNT, window_width, window_height);
 
-    for (int i = 0; i < MAIN_BUTTON_COUNT; i++) {
-        const Rectangle rect = main_button_rect(i, window_width, window_height);
-        draw_button(rect, MAIN_ENTRIES[i].label, 21.0f, false, MAIN_ENTRIES[i].accent);
-        draw_accent_stripe(rect, MAIN_ENTRIES[i].accent);
-
-        if (CheckCollisionPointRec(mouse, rect)) {
-            hint = MAIN_ENTRIES[i].hint;
+        if (i == 0) {
+            ui_hairline(rect.x, rect.y, rect.width, HAIRLINE);
         }
+
+        draw_row(rect, MAIN_ENTRIES[i].mark, MAIN_ENTRIES[i].label, MAIN_ENTRIES[i].hint,
+                 MAIN_ENTRIES[i].accent, hover_of(menu, i), false);
     }
 
-    if (hint != NULL) {
-        ui_text_center(hint, center_x, (float)window_height - 58.0f, 15.0f, COLOR_MUTED);
-    }
+    /* No footer here. The rows are the whole screen, and the only thing that
+       ever sat down there was a caption for a setting two rows above it. */
 }
 
 static void draw_level(const MenuState *menu, int window_width, int window_height) {
     const bool zen = menu->pending_mode == GAME_MODE_ZEN;
     const Color accent = zen ? (Color){178, 150, 255, 255} : (Color){255, 186, 92, 255};
 
-    draw_screen_title(
-        zen ? "Zen" : "Marathon",
-        zen ? "Pick a speed. It never changes." : "Pick a starting level. It rises every 10 lines.",
-        window_width,
-        (float)window_height * 0.5f - 196.0f
-    );
+    draw_screen_header(window_width, zen ? "Zen" : "Marathon");
 
     for (int i = 0; i < MAX_START_LEVEL; i++) {
-        draw_button(
-            level_button_rect(i, window_width, window_height),
-            TextFormat("%d", i + 1),
-            21.0f,
-            menu->selected_level == i + 1,
-            accent
-        );
+        draw_level_cell(level_rect(i, window_width, window_height), i + 1,
+                        menu->selected_level == i + 1, hover_of(menu, i), accent);
     }
 
-    draw_button(back_button_rect(window_width, window_height), "Back", 17.0f, false, ACCENT);
+    /* The main menu row already explains what each mode does. */
+    draw_footer(window_width, window_height, NULL, "esc to go back");
 }
 
-static void draw_themes(const ThemeLibrary *themes, int window_width, int window_height) {
-    const Color accent = (Color){150, 220, 170, 255};
-
-    draw_screen_title("Themes", "Block art is data driven. Drop a folder in and list it in themes.cfg.",
-                      window_width, 72.0f);
+static void draw_themes(
+    const MenuState *menu,
+    const ThemeLibrary *themes,
+    int window_width,
+    int window_height
+) {
+    draw_screen_header(window_width, "Themes");
 
     for (int i = 0; i < themes->count; i++) {
         const Theme *theme = &themes->entries[i];
-        const Rectangle rect = theme_row_rect(i, themes->count, window_width, window_height);
+        const Rectangle rect = row_rect(i, themes->count, window_width, window_height);
         const bool active = themes->active == i;
+        const float weight = hover_of(menu, i);
 
-        draw_surface(rect, active, accent);
-        ui_text(theme->name, rect.x + 20.0f, rect.y + 10.0f, 19.0f, RAYWHITE);
-
-        if (theme->flavor[0] != '\0') {
-            ui_text(theme->flavor, rect.x + 20.0f, rect.y + 34.0f, 13.0f, COLOR_MUTED);
+        if (i == 0) {
+            ui_hairline(rect.x, rect.y, rect.width, HAIRLINE);
         }
+
+        /* A theme's own I piece colour tints the row that selects it. */
+        const Color accent = theme->piece_colors[PIECE_I];
+        const char *hint = theme->flavor;
 
         if (active) {
-            draw_accent_stripe(rect, accent);
+            hint = theme->flavor[0] != '\0' ? TextFormat("active  -  %s", theme->flavor) : "active";
         }
 
-        /* Only the active theme keeps a texture in memory, so preview the
-           palette rather than the art. */
-        const float swatch = 11.0f;
-        float swatch_x = rect.x + rect.width - 20.0f - (swatch + 3.0f) * PIECE_L + 3.0f;
+        /* Themes are user supplied, so their mark is the first of their name
+           rather than something we can write down in a table. */
+        char mark[4];
+        int letters = 0;
+
+        for (; letters < 3 && theme->name[letters] != '\0'; letters++) {
+            const char c = theme->name[letters];
+            mark[letters] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
+        }
+
+        mark[letters] = '\0';
+
+        draw_row(rect, mark, theme->name, hint[0] != '\0' ? hint : NULL, accent, weight, active);
+
+        /* Only the active theme keeps its art in memory, so preview the
+           palette rather than the block sheet. */
+        const float pieces = (float)(PIECE_L - PIECE_I + 1);
+        const float strip = pieces * SWATCH + (pieces - 1.0f) * SWATCH_GAP;
+        float x = rect.x + rect.width - 30.0f - strip;
 
         for (int piece = PIECE_I; piece <= PIECE_L; piece++) {
-            DrawRectangleRounded(
-                (Rectangle){swatch_x, rect.y + rect.height * 0.5f - swatch * 0.5f, swatch, swatch},
-                0.3f,
-                4,
-                theme->piece_colors[piece]
-            );
-            swatch_x += swatch + 3.0f;
+            const float alpha = active ? 1.0f : 0.45f + 0.4f * weight;
+
+            DrawRectangleRec((Rectangle){x, rect.y + rect.height * 0.5f - SWATCH * 0.5f, SWATCH, SWATCH},
+                             Fade(theme->piece_colors[piece], alpha));
+            x += SWATCH + SWATCH_GAP;
         }
     }
 
-    draw_button(back_button_rect(window_width, window_height), "Back", 17.0f, false, ACCENT);
+    draw_footer(window_width, window_height, NULL, "esc to go back");
 }
 
 static void draw_score_column(
     const char *heading,
-    Color heading_color,
+    Color accent,
     const ScoreEntry *entries,
     int count,
     bool is_time,
     float x,
+    float width,
     float y
 ) {
-    ui_label(heading, x, y - 26.0f, 12.0f, heading_color);
+    ui_label(heading, x, y, 9.5f, accent);
+    ui_hairline(x, y + 18.0f, width, HAIRLINE);
 
     if (count == 0) {
-        ui_text("no runs yet", x, y + 4.0f, 14.0f, COLOR_DIM);
+        ui_label("no runs yet", x, y + 32.0f, 9.0f, DIM);
         return;
     }
 
     char buffer[32];
 
     for (int i = 0; i < count; i++) {
-        const float row_y = y + (float)i * 27.0f;
+        const float row_y = y + 32.0f + (float)i * 26.0f;
+        const Color tone = i == 0 ? accent : INK_SOFT;
 
-        ui_text_mono(TextFormat("%d", i + 1), x, row_y + 2.0f, 14.0f, COLOR_DIM);
+        ui_text_mono(TextFormat("%d", i + 1), x, row_y + 3.0f, 11.0f, DIM);
 
         if (is_time) {
             scores_format_time(entries[i].time_seconds, buffer, (int)sizeof(buffer));
-            ui_text_mono(buffer, x + 26.0f, row_y, 18.0f, i == 0 ? heading_color : RAYWHITE);
+            ui_text_mono(buffer, x + 22.0f, row_y, 17.0f, tone);
         } else {
-            ui_text_mono(TextFormat("%d", entries[i].score), x + 26.0f, row_y, 18.0f,
-                         i == 0 ? heading_color : RAYWHITE);
-            ui_text_mono(TextFormat("lv%d", entries[i].level), x + 132.0f, row_y + 3.0f, 13.0f, COLOR_DIM);
+            ui_text_mono(TextFormat("%d", entries[i].score), x + 22.0f, row_y, 17.0f, tone);
+
+            const char *level = TextFormat("lv%d", entries[i].level);
+            ui_text_mono(level, x + width - ui_measure_mono(level, 11.0f).x, row_y + 4.0f, 11.0f, DIM);
         }
     }
 }
 
 static void draw_scores(const ScoreTable *table, int window_width, int window_height) {
-    draw_screen_title("High Scores", NULL, window_width, 66.0f);
+    draw_screen_header(window_width, "High Scores");
 
-    const float left_x = (float)window_width * 0.5f - 196.0f;
-    const float right_x = (float)window_width * 0.5f + 24.0f;
-    const float list_y = 164.0f;
+    const float full = (float)window_width - MARGIN * 2.0f;
+    const float column = full * 0.44f;
+    const float top = content_top() + 26.0f;
 
     draw_score_column("40 Lines", (Color){96, 214, 255, 255}, table->sprint, table->sprint_count,
-                      true, left_x, list_y);
+                      true, MARGIN, column, top);
     draw_score_column("Marathon", (Color){255, 186, 92, 255}, table->marathon, table->marathon_count,
-                      false, right_x, list_y);
+                      false, MARGIN + full - column, column, top);
 
-    draw_button(back_button_rect(window_width, window_height), "Back", 17.0f, false, ACCENT);
+    draw_footer(window_width, window_height, NULL, "esc to go back");
 }
 
 void menu_draw(
@@ -423,16 +560,17 @@ void menu_draw(
     int window_height
 ) {
     render_background(themes_active(themes), window_width, window_height);
+    ui_scrim(window_width, window_height, 1.0f);
 
     switch (menu->screen) {
     case MENU_SCREEN_MAIN:
-        draw_main(window_width, window_height);
+        draw_main(menu, window_width, window_height);
         break;
     case MENU_SCREEN_LEVEL:
         draw_level(menu, window_width, window_height);
         break;
     case MENU_SCREEN_THEMES:
-        draw_themes(themes, window_width, window_height);
+        draw_themes(menu, themes, window_width, window_height);
         break;
     case MENU_SCREEN_SCORES:
         draw_scores(table, window_width, window_height);

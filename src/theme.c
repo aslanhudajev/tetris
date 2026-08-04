@@ -154,14 +154,21 @@ static void theme_set_defaults(Theme *theme) {
     theme->backdrop.top = (Color){18, 18, 24, 255};
     theme->backdrop.fit = THEME_FIT_COVER;
 
-    theme->panel.fill = (Color){28, 28, 36, 255};
-    theme->panel.border = (Color){60, 60, 72, 255};
-    theme->panel.border_width = 1.5f;
-    theme->panel.radius = 8.0f;
+    /* Square, hard edged and neutral. Rounded corners and tinted frames both
+       pull attention away from the blocks, which are the only thing on this
+       screen that should be carrying colour. */
+    theme->panel.fill = (Color){9, 9, 10, 235};
+    theme->panel.border = (Color){255, 255, 255, 58};
+    theme->panel.border_width = 1.0f;
+    theme->panel.radius = 0.0f;
     theme->panel.fit = THEME_FIT_STRETCH;
 
-    theme->well.border_width = 2.0f;
-    theme->well.radius = 10.0f;
+    /* Slightly translucent so a shader or image backdrop still carries through
+       the playfield instead of being punched out by it. */
+    theme->well.fill = (Color){7, 7, 8, 238};
+    theme->well.border = (Color){255, 255, 255, 58};
+    theme->well.border_width = 1.0f;
+    theme->well.radius = 0.0f;
     theme->well.fit = THEME_FIT_STRETCH;
 
     theme->ghost_style = THEME_GHOST_TILE;
@@ -194,7 +201,6 @@ static bool apply_surface_field(
         parse_color(value, &surface->fill);
     } else if (strcmp(suffix, "_border") == 0) {
         parse_color(value, &surface->border);
-        surface->border_is_override = true;
     } else if (strcmp(suffix, "_border_width") == 0) {
         surface->border_width = strtof(value, NULL);
     } else if (strcmp(suffix, "_radius") == 0) {
@@ -292,7 +298,6 @@ static void apply_field(Theme *theme, const char *key, const char *value) {
     } else if (strcmp(key, "outline") == 0) {
         /* Older manifests used one key for every edge. */
         parse_color(value, &theme->panel.border);
-        theme->panel.border_is_override = true;
     } else if (strcmp(key, "ghost") == 0) {
         theme->ghost_style = strcmp(value, "outline") == 0 ? THEME_GHOST_OUTLINE : THEME_GHOST_TILE;
     } else if (strcmp(key, "ghost_opacity") == 0) {
@@ -352,9 +357,6 @@ static void theme_finalize(Theme *theme) {
         theme->backdrop.top = mix_color(theme->backdrop.top, (Color){255, 255, 255, 255}, 0.06f);
     }
 
-    if (theme->well.fill.a == 0) {
-        theme->well.fill = mix_color(theme->panel.fill, (Color){0, 0, 0, 255}, 0.35f);
-    }
 }
 
 static void add_builtin_theme(ThemeLibrary *library) {

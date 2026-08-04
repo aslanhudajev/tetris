@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds Puzzie.app as a self-contained universal binary and zips it.
+# Builds Metris.app as a self-contained universal binary and zips it.
 #
 # The result runs on both Intel and Apple Silicon Macs with nothing installed:
 # raylib is compiled from source and linked statically, and the assets live
@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$ROOT/build-bundle"
 DIST_DIR="$ROOT/dist"
-APP="$BUILD_DIR/Puzzie.app"
+APP="$BUILD_DIR/Metris.app"
 
 echo "==> Configuring universal build"
 # Drop the cache first. raylib's SUPPORT_* switches are cached options, so a
@@ -18,7 +18,7 @@ echo "==> Configuring universal build"
 rm -f "$BUILD_DIR/CMakeCache.txt"
 
 cmake -B "$BUILD_DIR" -S "$ROOT" \
-    -DPUZZIE_BUNDLE=ON \
+    -DMETRIS_BUNDLE=ON \
     -DCMAKE_BUILD_TYPE=Release
 
 # SUPPORT_CUSTOM_FRAME_CONTROL strips SwapScreenBuffer() and PollInputEvents()
@@ -33,7 +33,7 @@ fi
 echo "==> Building (raylib is compiled from source, this takes a few minutes)"
 cmake --build "$BUILD_DIR" --config Release -j"$(sysctl -n hw.ncpu)"
 
-BINARY="$APP/Contents/MacOS/Puzzie"
+BINARY="$APP/Contents/MacOS/Metris"
 
 if [ ! -f "$BINARY" ]; then
     echo "!! Expected $BINARY but it is missing" >&2
@@ -75,14 +75,14 @@ codesign --verify --deep --strict "$APP"
 
 echo "==> Packaging"
 mkdir -p "$DIST_DIR"
-rm -f "$DIST_DIR/Puzzie.zip"
+rm -f "$DIST_DIR/Metris.zip"
 # ditto rather than zip: it preserves the bundle structure and metadata.
-ditto -c -k --keepParent "$APP" "$DIST_DIR/Puzzie.zip"
+ditto -c -k --keepParent "$APP" "$DIST_DIR/Metris.zip"
 
 echo
-echo "Done: $DIST_DIR/Puzzie.zip ($(du -h "$DIST_DIR/Puzzie.zip" | cut -f1))"
+echo "Done: $DIST_DIR/Metris.zip ($(du -h "$DIST_DIR/Metris.zip" | cut -f1))"
 echo
 echo "The app is signed ad-hoc, not notarised, so macOS will quarantine it"
 echo "after transfer. On her Mac, either:"
-echo "  - right-click Puzzie.app > Open, then confirm, or"
-echo "  - run: xattr -dr com.apple.quarantine /path/to/Puzzie.app"
+echo "  - right-click Metris.app > Open, then confirm, or"
+echo "  - run: xattr -dr com.apple.quarantine /path/to/Metris.app"

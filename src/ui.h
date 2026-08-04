@@ -19,11 +19,24 @@ void ui_text_shadowed(const char *text, float x, float y, float size, Color colo
 
 /* Letter spaced small caps used for stat labels. */
 void ui_label(const char *text, float x, float y, float size, Color color);
+Vector2 ui_measure_label(const char *text, float size);
 
 void ui_rounded(Rectangle rect, float radius, Color color);
 void ui_rounded_outline(Rectangle rect, float radius, float thickness, Color color);
-void ui_shadow(Rectangle rect, float radius, float spread, float alpha);
-void ui_panel(Rectangle rect, float radius, Color fill, Color border);
+
+/* One device pixel, used as a separator instead of boxing content in. */
+void ui_hairline(float x, float y, float width, Color color);
+
+/* Colour fading out left to right across the rect. Carries a row's identity
+   without putting a border or a stripe on it. */
+void ui_wash(Rectangle rect, Color color, float alpha);
+
+/* Darkens the backdrop behind the interface. Themes can install any image or
+   shader they like back there, so text needs its own contrast floor. */
+void ui_scrim(int width, int height, float strength);
+
+/* Frame rate independent approach to a target, for hover transitions. */
+float ui_approach(float current, float target, float rate, float dt);
 
 Color ui_mix(Color a, Color b, float t);
 
