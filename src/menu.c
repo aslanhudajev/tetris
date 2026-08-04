@@ -16,6 +16,11 @@
 #define FOOTER_HEIGHT 54.0f
 #define ROW_HEIGHT 62.0f
 
+/* Shortest a row goes before the label itself would be cramped. Below the
+   threshold in draw_row the hint is dropped rather than overflowing. */
+#define ROW_COMPACT 42.0f
+#define ROW_HINT_MIN 56.0f
+
 /* Label column, clear of the mark chip in the left margin. */
 #define GUTTER 50.0f
 #define CHIP_WIDTH 36.0f
@@ -28,14 +33,11 @@
 #define SWATCH 9.0f
 #define SWATCH_GAP 3.0f
 
-/* Neutral greys, no blue cast: the row accents are the only hue in the
-   interface. Secondary tones sit at roughly 4.5:1 against the scrimmed
-   backdrop, which is the floor for text this small. */
-static const Color INK = {244, 244, 244, 255};
-static const Color INK_SOFT = {216, 216, 216, 255};
-static const Color MUTED = {184, 184, 184, 255};
-static const Color DIM = {148, 148, 148, 255};
-static const Color HAIRLINE = {255, 255, 255, 34};
+/* The active theme's interface colours, refreshed at the top of menu_draw. Row
+   accents are the only hue here; everything else is a step on the theme's own
+   scale, so a light theme reads as dark type on a pale backdrop without any of
+   the drawing below needing to know which it is. */
+static const ThemeInk *ink = NULL;
 
 /* Every screen indexes hover state by row, so the longest list has to fit. */
 _Static_assert(MAIN_ROW_COUNT <= MENU_MAX_ROWS, "main menu needs a hover slot per row");
@@ -60,6 +62,11 @@ static const MainEntry MAIN_ENTRIES[MAIN_ROW_COUNT] = {
     {"EXT", "Quit", "Close the game", {228, 122, 122, 255}},
 };
 
+/* A monochrome theme collapses all of these onto its one accent. */
+static Color accent_of(Color preferred) {
+    return ink->accent_is_override ? ink->accent : preferred;
+}
+
 /* Layout ------------------------------------------------------------------ */
 
 static float content_top(void) {
@@ -70,11 +77,25 @@ static float content_bottom(int window_height) {
     return (float)window_height - FOOTER_HEIGHT;
 }
 
+/* Rows give up height before they give up fitting. Past the point where the
+   hint line no longer has room they drop it and keep only the label, which is
+   what lets the theme list grow without needing to scroll. */
+static float row_height(int count, int window_height) {
+    const float span = content_bottom(window_height) - content_top();
+    const float fitted = span / (float)(count > 0 ? count : 1);
+
+    if (fitted > ROW_HEIGHT) {
+        return ROW_HEIGHT;
+    }
+
+    return fitted < ROW_COMPACT ? ROW_COMPACT : fitted;
+}
+
 static Rectangle row_rect(int index, int count, int window_width, int window_height) {
     const float top = content_top();
     const float span = content_bottom(window_height) - top;
-    const float total = (float)count * ROW_HEIGHT;
-    float start = top + (span - total) * 0.5f;
+    const float height = row_height(count, window_height);
+    float start = top + (span - (float)count * height) * 0.5f;
 
     if (start < top) {
         start = top;
@@ -82,9 +103,9 @@ static Rectangle row_rect(int index, int count, int window_width, int window_hei
 
     return (Rectangle){
         MARGIN,
-        start + (float)index * ROW_HEIGHT,
+        start + (float)index * height,
         (float)window_width - MARGIN * 2.0f,
-        ROW_HEIGHT,
+        height,
     };
 }
 
@@ -155,31 +176,31 @@ static void draw_chevron_left(float x, float y, float half, float thickness, Col
 }
 
 static void draw_home_header(int window_width) {
-    ui_label(GAME_TITLE, MARGIN, 46.0f, 25.0f, INK);
-    ui_hairline(MARGIN, HEADER_HEIGHT - 8.0f, (float)window_width - MARGIN * 2.0f, HAIRLINE);
+    ui_label(GAME_TITLE, MARGIN, 46.0f, 25.0f, ink->ink);
+    ui_hairline(MARGIN, HEADER_HEIGHT - 8.0f, (float)window_width - MARGIN * 2.0f, ink->hairline);
 }
 
 static void draw_screen_header(int window_width, const char *title) {
-    const Color tone = hovering(back_rect()) ? INK : MUTED;
+    const Color tone = hovering(back_rect()) ? ink->ink : ink->muted;
 
     draw_chevron_left(MARGIN + 1.0f, 38.0f, 4.0f, 1.6f, tone);
     ui_label("back", MARGIN + 13.0f, 33.0f, 9.0f, tone);
-    ui_label(title, MARGIN, 56.0f, 21.0f, INK);
-    ui_hairline(MARGIN, HEADER_HEIGHT - 8.0f, (float)window_width - MARGIN * 2.0f, HAIRLINE);
+    ui_label(title, MARGIN, 56.0f, 21.0f, ink->ink);
+    ui_hairline(MARGIN, HEADER_HEIGHT - 8.0f, (float)window_width - MARGIN * 2.0f, ink->hairline);
 }
 
 static void draw_footer(int window_width, int window_height, const char *left, const char *right) {
     const float y = content_bottom(window_height);
 
-    ui_hairline(MARGIN, y, (float)window_width - MARGIN * 2.0f, HAIRLINE);
+    ui_hairline(MARGIN, y, (float)window_width - MARGIN * 2.0f, ink->hairline);
 
     if (left != NULL) {
-        ui_label(left, MARGIN, y + 20.0f, 9.0f, DIM);
+        ui_label(left, MARGIN, y + 20.0f, 9.0f, ink->dim);
     }
 
     if (right != NULL) {
         ui_label(right, (float)window_width - MARGIN - ui_measure_label(right, 9.0f).x, y + 20.0f,
-                 9.0f, DIM);
+                 9.0f, ink->dim);
     }
 }
 
@@ -204,35 +225,49 @@ static void draw_row(
     wash.width *= 0.72f;
     ui_wash(wash, accent, 0.045f + 0.19f * lit);
 
-    ui_hairline(rect.x, rect.y + rect.height, rect.width, HAIRLINE);
+    ui_hairline(rect.x, rect.y + rect.height, rect.width, ink->hairline);
 
     const float indent = 7.0f * weight;
-    const Rectangle chip = {
-        rect.x + indent,
-        rect.y + rect.height * 0.5f - CHIP_HEIGHT * 0.5f,
-        CHIP_WIDTH,
-        CHIP_HEIGHT,
-    };
 
-    /* Square, and it fills as the row lights: the mark inverts to dark on the
-       accent rather than the accent brightening in place. */
-    DrawRectangleRec(chip, Fade(accent, 0.14f + 0.80f * lit));
+    /* Without a mark the label runs to the left edge, flush with the header
+       above it. */
+    const float lead = mark != NULL ? GUTTER : 0.0f;
 
-    const Vector2 mark_size = ui_measure_mono(mark, 12.0f);
+    if (mark != NULL) {
+        const Rectangle chip = {
+            rect.x + indent,
+            rect.y + rect.height * 0.5f - CHIP_HEIGHT * 0.5f,
+            CHIP_WIDTH,
+            CHIP_HEIGHT,
+        };
 
-    ui_text_mono(
-        mark,
-        chip.x + chip.width * 0.5f - mark_size.x * 0.5f,
-        chip.y + chip.height * 0.5f - mark_size.y * 0.5f,
-        12.0f,
-        ui_mix(accent, (Color){14, 14, 16, 255}, lit)
-    );
+        /* Square, and it fills as the row lights: the mark inverts to dark on
+           the accent rather than the accent brightening in place. */
+        DrawRectangleRec(chip, Fade(accent, 0.14f + 0.80f * lit));
 
-    ui_text(label, rect.x + GUTTER + indent, rect.y + 13.0f, 23.0f, ui_mix(INK_SOFT, WHITE, weight));
+        const Vector2 mark_size = ui_measure_mono(mark, 12.0f);
 
-    if (hint != NULL) {
-        ui_label(hint, rect.x + GUTTER + 1.0f + indent, rect.y + 43.0f, 9.0f,
-                 ui_mix(DIM, MUTED, lit));
+        ui_text_mono(
+            mark,
+            chip.x + chip.width * 0.5f - mark_size.x * 0.5f,
+            chip.y + chip.height * 0.5f - mark_size.y * 0.5f,
+            12.0f,
+            ui_mix(accent, ink->chip_ink, lit)
+        );
+    }
+
+    const bool room_for_hint = hint != NULL && rect.height >= ROW_HINT_MIN;
+    const Color label_tone = ui_mix(ink->ink_soft, ink->ink, weight);
+
+    if (room_for_hint) {
+        ui_text(label, rect.x + lead + indent, rect.y + 13.0f, 23.0f, label_tone);
+        ui_label(hint, rect.x + lead + 1.0f + indent, rect.y + 43.0f, 9.0f,
+                 ui_mix(ink->dim, ink->muted, lit));
+    } else {
+        /* Nothing below it, so the label centres on the row instead of sitting
+           where it would if a hint were coming. */
+        ui_text(label, rect.x + lead + indent, rect.y + rect.height * 0.5f - 11.0f, 21.0f,
+                label_tone);
     }
 
     if (weight > 0.01f) {
@@ -242,12 +277,12 @@ static void draw_row(
 }
 
 static void draw_level_cell(Rectangle rect, int level, bool selected, float weight, Color accent) {
-    Color fill = Fade(WHITE, 0.05f + 0.06f * weight);
-    Color text = ui_mix(INK_SOFT, WHITE, weight);
+    Color fill = Fade(ink->ink, 0.05f + 0.06f * weight);
+    Color text = ui_mix(ink->ink_soft, ink->ink, weight);
 
     if (selected) {
         fill = Fade(accent, 0.92f);
-        text = (Color){16, 16, 22, 255};
+        text = ink->chip_ink;
     }
 
     DrawRectangleRec(rect, fill);
@@ -415,11 +450,11 @@ static void draw_main(const MenuState *menu, int window_width, int window_height
         const Rectangle rect = row_rect(i, MAIN_ROW_COUNT, window_width, window_height);
 
         if (i == 0) {
-            ui_hairline(rect.x, rect.y, rect.width, HAIRLINE);
+            ui_hairline(rect.x, rect.y, rect.width, ink->hairline);
         }
 
         draw_row(rect, MAIN_ENTRIES[i].mark, MAIN_ENTRIES[i].label, MAIN_ENTRIES[i].hint,
-                 MAIN_ENTRIES[i].accent, hover_of(menu, i), false);
+                 accent_of(MAIN_ENTRIES[i].accent), hover_of(menu, i), false);
     }
 
     /* No footer here. The rows are the whole screen, and the only thing that
@@ -428,7 +463,8 @@ static void draw_main(const MenuState *menu, int window_width, int window_height
 
 static void draw_level(const MenuState *menu, int window_width, int window_height) {
     const bool zen = menu->pending_mode == GAME_MODE_ZEN;
-    const Color accent = zen ? (Color){178, 150, 255, 255} : (Color){255, 186, 92, 255};
+    const Color accent =
+        accent_of(zen ? (Color){178, 150, 255, 255} : (Color){255, 186, 92, 255});
 
     draw_screen_header(window_width, zen ? "Zen" : "Marathon");
 
@@ -456,7 +492,7 @@ static void draw_themes(
         const float weight = hover_of(menu, i);
 
         if (i == 0) {
-            ui_hairline(rect.x, rect.y, rect.width, HAIRLINE);
+            ui_hairline(rect.x, rect.y, rect.width, ink->hairline);
         }
 
         /* A theme's own I piece colour tints the row that selects it. */
@@ -467,19 +503,9 @@ static void draw_themes(
             hint = theme->flavor[0] != '\0' ? TextFormat("active  -  %s", theme->flavor) : "active";
         }
 
-        /* Themes are user supplied, so their mark is the first of their name
-           rather than something we can write down in a table. */
-        char mark[4];
-        int letters = 0;
-
-        for (; letters < 3 && theme->name[letters] != '\0'; letters++) {
-            const char c = theme->name[letters];
-            mark[letters] = (c >= 'a' && c <= 'z') ? (char)(c - 'a' + 'A') : c;
-        }
-
-        mark[letters] = '\0';
-
-        draw_row(rect, mark, theme->name, hint[0] != '\0' ? hint : NULL, accent, weight, active);
+        /* No mark: an abbreviation of a theme's own name says nothing the name
+           beside it does not, and the swatches already carry its colour. */
+        draw_row(rect, NULL, theme->name, hint[0] != '\0' ? hint : NULL, accent, weight, active);
 
         /* Only the active theme keeps its art in memory, so preview the
            palette rather than the block sheet. */
@@ -510,10 +536,10 @@ static void draw_score_column(
     float y
 ) {
     ui_label(heading, x, y, 9.5f, accent);
-    ui_hairline(x, y + 18.0f, width, HAIRLINE);
+    ui_hairline(x, y + 18.0f, width, ink->hairline);
 
     if (count == 0) {
-        ui_label("no runs yet", x, y + 32.0f, 9.0f, DIM);
+        ui_label("no runs yet", x, y + 32.0f, 9.0f, ink->dim);
         return;
     }
 
@@ -521,9 +547,9 @@ static void draw_score_column(
 
     for (int i = 0; i < count; i++) {
         const float row_y = y + 32.0f + (float)i * 26.0f;
-        const Color tone = i == 0 ? accent : INK_SOFT;
+        const Color tone = i == 0 ? accent : ink->ink_soft;
 
-        ui_text_mono(TextFormat("%d", i + 1), x, row_y + 3.0f, 11.0f, DIM);
+        ui_text_mono(TextFormat("%d", i + 1), x, row_y + 3.0f, 11.0f, ink->dim);
 
         if (is_time) {
             scores_format_time(entries[i].time_seconds, buffer, (int)sizeof(buffer));
@@ -532,7 +558,7 @@ static void draw_score_column(
             ui_text_mono(TextFormat("%d", entries[i].score), x + 22.0f, row_y, 17.0f, tone);
 
             const char *level = TextFormat("lv%d", entries[i].level);
-            ui_text_mono(level, x + width - ui_measure_mono(level, 11.0f).x, row_y + 4.0f, 11.0f, DIM);
+            ui_text_mono(level, x + width - ui_measure_mono(level, 11.0f).x, row_y + 4.0f, 11.0f, ink->dim);
         }
     }
 }
@@ -544,9 +570,9 @@ static void draw_scores(const ScoreTable *table, int window_width, int window_he
     const float column = full * 0.44f;
     const float top = content_top() + 26.0f;
 
-    draw_score_column("40 Lines", (Color){96, 214, 255, 255}, table->sprint, table->sprint_count,
+    draw_score_column("40 Lines", accent_of((Color){96, 214, 255, 255}), table->sprint, table->sprint_count,
                       true, MARGIN, column, top);
-    draw_score_column("Marathon", (Color){255, 186, 92, 255}, table->marathon, table->marathon_count,
+    draw_score_column("Marathon", accent_of((Color){255, 186, 92, 255}), table->marathon, table->marathon_count,
                       false, MARGIN + full - column, column, top);
 
     draw_footer(window_width, window_height, NULL, "esc to go back");
@@ -559,8 +585,12 @@ void menu_draw(
     int window_width,
     int window_height
 ) {
-    render_background(themes_active(themes), window_width, window_height);
-    ui_scrim(window_width, window_height, 1.0f);
+    const Theme *active = themes_active(themes);
+
+    ink = &active->ink;
+
+    render_background(active, window_width, window_height);
+    ui_scrim(window_width, window_height, ink->scrim);
 
     switch (menu->screen) {
     case MENU_SCREEN_MAIN:

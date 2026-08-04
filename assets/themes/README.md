@@ -256,16 +256,45 @@ panel_fit = stretch
 ```
 
 Both surfaces default to square corners, a near-black fill and a hairline white
-edge, so the only colour in the playfield comes from the blocks themselves. The
-hold and next labels are drawn inverted on a bar across the top of each panel
-and are not themeable — they have to stay legible whatever a theme does with
-the fill underneath.
+edge, so the only colour in the playfield comes from the blocks themselves.
 
 Clear `panel` and `panel_border_width` both and the box behind them goes away,
 leaving just the label bar and the piece.
 
 Fills accept eight-digit RGBA, which is how the `Starfield` theme lets its
 backdrop show through the well and the panels.
+
+## Interface colours
+
+Type, separators and overlays. Most themes never touch these — the defaults are
+light on dark and they suit any dark backdrop. They exist so that a theme can
+put a *pale* backdrop behind the game without the interface disappearing into
+it.
+
+```ini
+ui = light          ; preset; must come before any override below
+ui_ink = 0F380F     ; headings and the values that matter
+ui_ink_soft = ...   ; body text; halfway between ink and muted unless set
+ui_muted = 1B471B   ; secondary text
+ui_dim = 265426     ; small caps labels and captions
+ui_hairline = 0F380F44
+ui_chip = 0F380F    ; the bar behind the HOLD and NEXT labels
+ui_chip_ink = 9BBC0F
+ui_scrim = 9BBC0F   ; laid over the backdrop behind the menu
+ui_accent = 0F380F  ; collapses every mode colour onto one
+```
+
+`ui = light` swaps the whole set in one line, including the scrim, which lifts
+the backdrop instead of darkening it. It overwrites everything, so it has to
+come first; an override above it is simply lost.
+
+`ui_accent` is for monochrome themes. Normally 40 Lines is cyan, Zen violet and
+Marathon amber, which a green phosphor or four-tone-green theme has nowhere to
+put. Setting it replaces all of them, everywhere, with the one colour.
+
+Watch the contrast when you change these. `ui_dim` is used at around nine
+points, and small text needs roughly 4.5:1 against whatever ends up behind it —
+which is the backdrop *after* the scrim, not the backdrop on its own.
 
 ## Landing preview
 
@@ -280,6 +309,22 @@ ghost_opacity = 0.13
 `ghost_opacity` accepts 0 to 1. Left out, it defaults to `0.13` for the tile
 style and `0.5` for the outline style. A theme with no art always draws outlines
 regardless of what it asks for.
+
+An outline ghost is drawn in the piece's own colour, which fails badly when a
+piece happens to sit at the same brightness as the well behind it — the preview
+does not merely dim, it disappears. Any palette built from a single hue will
+have at least one piece that collides this way.
+
+So each ghost colour is nudged towards black or white, whichever the well is
+further from, until it clears a minimum contrast against the well *after* its
+transparency is applied. Pieces that already contrast are left exactly as
+authored, which is most of them in a full colour palette and almost none of them
+in a monochrome one. It happens when the theme is finalised, so nothing is
+recomputed while the game runs.
+
+The one case this cannot reason about is a well left mostly transparent: what
+sits behind the ghost is then whatever the backdrop is doing, which may be
+moving.
 
 ## Colours
 

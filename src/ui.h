@@ -31,9 +31,10 @@ void ui_hairline(float x, float y, float width, Color color);
    without putting a border or a stripe on it. */
 void ui_wash(Rectangle rect, Color color, float alpha);
 
-/* Darkens the backdrop behind the interface. Themes can install any image or
-   shader they like back there, so text needs its own contrast floor. */
-void ui_scrim(int width, int height, float strength);
+/* Pushes the backdrop away from the interface. Themes can install any image or
+   shader they like back there, so text needs its own contrast floor. A light
+   theme passes white here and the scrim lifts the backdrop instead. */
+void ui_scrim(int width, int height, Color color);
 
 /* Frame rate independent approach to a target, for hover transitions. */
 float ui_approach(float current, float target, float rate, float dt);

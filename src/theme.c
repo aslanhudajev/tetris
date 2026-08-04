@@ -2,6 +2,7 @@
 
 #include "platform.h"
 
+#include <math.h>
 #include <rlgl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +25,11 @@ static const Color DEFAULT_PIECE_COLORS[PIECE_L + 1] = {
 #define GHOST_OPACITY_AUTO (-1.0f)
 #define GHOST_OPACITY_TILE 0.13f
 #define GHOST_OPACITY_OUTLINE 0.5f
+
+/* How far apart in luminance the ghost and the well have to end up once the
+   ghost's own transparency has been applied. Roughly the point where a one
+   pixel outline still reads without competing with a real piece. */
+#define GHOST_MIN_CONTRAST 0.22f
 
 #define DEFAULT_SHEET_ORDER "IOTSZJL"
 
@@ -135,6 +141,30 @@ static void apply_sheet_order(Theme *theme, const char *order) {
     }
 }
 
+/* Light on dark. Secondary tones sit at roughly 4.5:1 against a dark backdrop,
+   which is the floor for text this small. */
+static void ink_preset_dark(ThemeInk *ink) {
+    ink->ink = (Color){244, 244, 244, 255};
+    ink->muted = (Color){184, 184, 184, 255};
+    ink->dim = (Color){148, 148, 148, 255};
+    ink->hairline = (Color){255, 255, 255, 34};
+    ink->chip = (Color){226, 226, 226, 255};
+    ink->chip_ink = (Color){14, 14, 16, 255};
+    ink->scrim = (Color){0, 0, 0, 255};
+}
+
+/* The same relationships inverted, including the scrim, which lightens the
+   backdrop here rather than darkening it. */
+static void ink_preset_light(ThemeInk *ink) {
+    ink->ink = (Color){18, 18, 24, 255};
+    ink->muted = (Color){78, 78, 88, 255};
+    ink->dim = (Color){110, 110, 122, 255};
+    ink->hairline = (Color){0, 0, 0, 38};
+    ink->chip = (Color){26, 26, 32, 255};
+    ink->chip_ink = (Color){246, 246, 248, 255};
+    ink->scrim = (Color){255, 255, 255, 255};
+}
+
 static void theme_set_defaults(Theme *theme) {
     memset(theme, 0, sizeof(*theme));
 
@@ -170,6 +200,8 @@ static void theme_set_defaults(Theme *theme) {
     theme->well.border_width = 1.0f;
     theme->well.radius = 0.0f;
     theme->well.fit = THEME_FIT_STRETCH;
+
+    ink_preset_dark(&theme->ink);
 
     theme->ghost_style = THEME_GHOST_TILE;
     theme->ghost_opacity = GHOST_OPACITY_AUTO;
@@ -272,6 +304,40 @@ static bool apply_block_field(Theme *theme, const char *key, const char *value) 
     return true;
 }
 
+static bool apply_ink_field(ThemeInk *ink, const char *key, const char *value) {
+    if (strcmp(key, "ui") == 0) {
+        /* A preset, so a theme only has to name its overrides. It overwrites
+           the whole set, which is why it has to come before them. */
+        if (strcmp(value, "light") == 0) {
+            ink_preset_light(ink);
+        } else {
+            ink_preset_dark(ink);
+        }
+    } else if (strcmp(key, "ui_ink") == 0) {
+        parse_color(value, &ink->ink);
+    } else if (strcmp(key, "ui_ink_soft") == 0) {
+        ink->ink_soft_is_override = parse_color(value, &ink->ink_soft);
+    } else if (strcmp(key, "ui_muted") == 0) {
+        parse_color(value, &ink->muted);
+    } else if (strcmp(key, "ui_dim") == 0) {
+        parse_color(value, &ink->dim);
+    } else if (strcmp(key, "ui_hairline") == 0) {
+        parse_color(value, &ink->hairline);
+    } else if (strcmp(key, "ui_chip") == 0) {
+        parse_color(value, &ink->chip);
+    } else if (strcmp(key, "ui_chip_ink") == 0) {
+        parse_color(value, &ink->chip_ink);
+    } else if (strcmp(key, "ui_scrim") == 0) {
+        parse_color(value, &ink->scrim);
+    } else if (strcmp(key, "ui_accent") == 0) {
+        ink->accent_is_override = parse_color(value, &ink->accent);
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
 static void apply_field(Theme *theme, const char *key, const char *value) {
     const PieceType piece = piece_from_key(key);
 
@@ -282,6 +348,7 @@ static void apply_field(Theme *theme, const char *key, const char *value) {
 
     if (apply_block_field(theme, key, value) ||
         apply_backdrop_field(theme, key, value) ||
+        apply_ink_field(&theme->ink, key, value) ||
         apply_surface_field(&theme->panel, key, "panel", value) ||
         apply_surface_field(&theme->well, key, "well", value)) {
         return;
@@ -318,6 +385,68 @@ static Color mix_color(Color a, Color b, float t) {
         (unsigned char)(a.b + (b.b - a.b) * t),
         (unsigned char)(a.a + (b.a - a.a) * t),
     };
+}
+
+/* sRGB weights without the gamma step. This only has to rank colours against
+   one another, not match a perceptual standard. */
+static float luminance(Color color) {
+    return (0.2126f * color.r + 0.7152f * color.g + 0.0722f * color.b) / 255.0f;
+}
+
+/* The landing preview is drawn in the piece's own colour, which disappears
+   whenever a piece sits at the same brightness as the well behind it. A palette
+   built from one hue guarantees at least one that does — Game Boy's O piece was
+   the exact green of the well — so each ghost colour is pushed away from the
+   well until it clears a minimum separation.
+
+   Resolved here rather than while drawing, so the render loop still only reads
+   a colour out of a table. */
+static void resolve_ghost_colors(Theme *theme) {
+    /* A tile ghost is the block art drawn faintly, so it carries its own
+       shading and never reduces to a single colour. Only the outline style
+       reads this table. */
+    if (theme_ghost_style(theme) != THEME_GHOST_OUTLINE) {
+        for (int piece = PIECE_NONE; piece <= PIECE_L; piece++) {
+            theme->blocks.ghost[piece] = theme->piece_colors[piece];
+        }
+
+        return;
+    }
+
+    /* Assumes the well is close to opaque. A theme that makes it mostly
+       transparent is choosing whatever the backdrop does behind it. */
+    const float well = luminance(theme->well.fill);
+
+    /* Away from whichever end of the range the well is nearer. That leaves the
+       most room to move, and keeps a light theme's ghosts dark rather than
+       washing them out to white. */
+    const bool darken = well > 0.5f;
+    const Color pole = darken ? (Color){0, 0, 0, 255} : (Color){255, 255, 255, 255};
+    const float pole_lum = darken ? 0.0f : 1.0f;
+
+    /* Transparency scales the contrast down, so ask for proportionally more of
+       it than we need to end up with. */
+    const float opacity = theme_ghost_opacity(theme);
+    const float required = GHOST_MIN_CONTRAST / (opacity > 0.05f ? opacity : 0.05f);
+    const float target = darken ? well - required : well + required;
+
+    for (int piece = PIECE_NONE; piece <= PIECE_L; piece++) {
+        const Color color = theme->piece_colors[piece];
+        const float lum = luminance(color);
+
+        if (fabsf(lum - well) >= required) {
+            theme->blocks.ghost[piece] = color;
+            continue;
+        }
+
+        /* Blending towards the pole moves luminance linearly, so the blend that
+           just reaches the target can be solved for rather than searched. */
+        const float span = pole_lum - lum;
+        float t = (fabsf(span) < 0.001f) ? 1.0f : (target - lum) / span;
+
+        t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+        theme->blocks.ghost[piece] = mix_color(color, pole, t);
+    }
 }
 
 /* Folds every manifest choice into plain values. Nothing below this point is
@@ -357,6 +486,14 @@ static void theme_finalize(Theme *theme) {
         theme->backdrop.top = mix_color(theme->backdrop.top, (Color){255, 255, 255, 255}, 0.06f);
     }
 
+    /* Body text sits between the headings and the secondary tone, so a theme
+       that sets only `ui_ink` and `ui_muted` still gets a coherent third step. */
+    if (!theme->ink.ink_soft_is_override) {
+        theme->ink.ink_soft = mix_color(theme->ink.ink, theme->ink.muted, 0.5f);
+    }
+
+    /* Last, because it reads both the resolved block mode and the well. */
+    resolve_ghost_colors(theme);
 }
 
 static void add_builtin_theme(ThemeLibrary *library) {
@@ -402,7 +539,15 @@ static void parse_manifest(ThemeLibrary *library) {
 
         char *separator = strchr(text, '=');
 
-        if (current == NULL || separator == NULL) {
+        if (current == NULL) {
+            continue;
+        }
+
+        /* A few keys are switches rather than settings. background_flat is
+           documented without a value, so a bare key has to reach apply_field
+           instead of being dropped as a malformed line. */
+        if (separator == NULL) {
+            apply_field(current, text, "");
             continue;
         }
 

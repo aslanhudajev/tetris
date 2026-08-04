@@ -63,6 +63,10 @@ typedef struct {
     Color fill[PIECE_L + 1];
     Color border[PIECE_L + 1];
 
+    /* The piece colour pushed away from the well until the landing preview is
+       legible against it. Usually identical to the piece colour. */
+    Color ghost[PIECE_L + 1];
+
     Texture2D texture;
     bool texture_loaded;
 } ThemeBlocks;
@@ -97,6 +101,28 @@ typedef struct {
     int loc_resolution;
 } ThemeBackdrop;
 
+/* Interface colours. Everything drawn that is not a block, a backdrop or a
+   panel reads from here, so a theme is free to put a pale backdrop behind the
+   game without the type becoming unreadable on top of it. */
+typedef struct {
+    Color ink;       /* headings, values, the brightest type */
+    Color ink_soft;  /* body text; derived from ink and muted unless set */
+    Color muted;     /* secondary text */
+    Color dim;       /* small caps labels and captions */
+    Color hairline;  /* separators and the grid inside the well */
+    Color chip;      /* the bar behind the hold and next labels */
+    Color chip_ink;  /* type on that bar, and on a selected level */
+    Color scrim;     /* laid over the backdrop behind the menu and overlays */
+
+    /* Collapses every mode and menu accent onto one colour. A monochrome theme
+       has nowhere to put cyan, violet and amber, and the alternative is a key
+       per accent for the one theme in ten that cares. */
+    Color accent;
+    bool accent_is_override;
+
+    bool ink_soft_is_override;
+} ThemeInk;
+
 typedef struct {
     char id[THEME_ID_MAX];
     char name[THEME_NAME_MAX];
@@ -109,6 +135,7 @@ typedef struct {
     ThemeBackdrop backdrop;
     ThemeSurface panel;
     ThemeSurface well;
+    ThemeInk ink;
 
     ThemeGhostStyle ghost_style;
     /* Negative means "pick a sensible default for the ghost style". */

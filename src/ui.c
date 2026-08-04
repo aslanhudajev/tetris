@@ -200,17 +200,22 @@ void ui_wash(Rectangle rect, Color color, float alpha) {
     DrawRectangleGradientEx(rect, near_edge, near_edge, far_edge, far_edge);
 }
 
-void ui_scrim(int width, int height, float strength) {
+void ui_scrim(int width, int height, Color color) {
     const float w = (float)width;
     const float h = (float)height;
 
-    DrawRectangleRec((Rectangle){0.0f, 0.0f, w, h}, Fade(BLACK, 0.26f * strength));
+    /* The colour's own alpha scales the whole effect, so a theme can soften the
+       scrim without having to restate the three steps below. */
+    const float strength = (float)color.a / 255.0f;
+    const Color edge = Fade(color, 0.0f);
+
+    DrawRectangleRec((Rectangle){0.0f, 0.0f, w, h}, Fade(color, 0.26f * strength));
 
     /* Heavier at the edges than the middle, so the header and footer type sits
        on something solid while the backdrop still reads in the centre. */
-    DrawRectangleGradientV(0, 0, width, (int)(h * 0.32f), Fade(BLACK, 0.40f * strength), BLANK);
+    DrawRectangleGradientV(0, 0, width, (int)(h * 0.32f), Fade(color, 0.40f * strength), edge);
     DrawRectangleGradientV(
-        0, (int)(h * 0.62f), width, (int)(h * 0.38f) + 1, BLANK, Fade(BLACK, 0.46f * strength));
+        0, (int)(h * 0.62f), width, (int)(h * 0.38f) + 1, edge, Fade(color, 0.46f * strength));
 }
 
 float ui_approach(float current, float target, float rate, float dt) {
